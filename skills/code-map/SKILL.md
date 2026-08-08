@@ -3,7 +3,7 @@ name: code-map
 description: Answers "where is this symbol" and "what is in this file" for about 50 tokens instead of opening the file, by keeping a verified per-repo symbol cache. Use before reading a file to find one function, class, route, table or heading in it; when asked where something is defined; when orienting in an unfamiliar repository; or when a session is re-reading the same files it read last time. Every answer is re-checked against the file on disk, so a stale cache produces a miss and never a wrong location. Also measures what re-reading actually costs across past sessions. Regex-based and deliberately incomplete — fall back to Grep on a miss.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
   author: token-audit contributors
 ---
 
@@ -22,6 +22,14 @@ metadata:
 
 Reading is where the tokens go. Rediscovering *where things are* costs almost nothing;
 re-reading *the things themselves* costs 30%.
+
+**Measured limitation, stated before anything else (v0.7.0):** in a controlled 24-task trial —
+byte-identical prompts, this skill installed as a real project skill and advertised in the
+skills listing of **all 24 runs**, map prebuilt — it was invoked **zero times**. The agent
+reached for Grep every time, and Grep scored 12/12 on the location block this skill exists to
+serve. One repo, n=1 per item; the mechanism was not disproved — it was never invoked. But
+until that changes, every saving on this page is **available per question, realised only when
+this skill is explicitly invoked**.
 
 ## Use it in this order
 
@@ -51,9 +59,10 @@ location question:
 | median tokens | 2,504–3,710 | 563–606 (**−76% to −85%**) | 135–182 (**−95%**) |
 
 These figures are arithmetic over files — the saving *available* when a location question is
-answered with a slice — not a saving measured as *realised* by an agent in a live session: the
-one agent trial to date (n=1, README) realised none, finishing at **+47% billed tokens and
-cost parity**.
+answered with a slice — not a saving measured as *realised* by an agent in a live session.
+Neither agent trial to date realised any of it: the coached one (n=1, README) finished at
+**+47% billed tokens and cost parity**, and the uncoached 24-task trial never invoked the
+skill at all.
 
 The map is **worse** for 5–26% of files — ones small enough that reading them costs less than
 slicing them. Below ~40 lines, just read the file.
@@ -103,6 +112,17 @@ tempted to cat `.claude/code-map/symbols.tsv` into context, do not** — query i
 - Skips files over 1 MB and minified/bundled files (long-line shape).
 - `find` matches names, not usages. "Who calls this" is `code-index`'s `IMPORTEDBY`, or Grep.
 - The cache lives in `.claude/code-map/` in the repo. Add it to `.gitignore`.
+
+## Open question — untested
+
+The trial's frozen interpretation table calls the zero-invocation result a **product finding:
+the skill's description does not make it fire.** The working hypothesis is that the
+`description:` frontmatter — the only part of this file a model sees before deciding to invoke
+it — is what fails, not the mechanism underneath, which was never invoked and therefore never
+tested. **That hypothesis is itself untested.** It cannot be settled by rewriting the
+description and shipping it; settling it requires re-running the 24-task trial with a changed
+description and counting invocations again. Until then, treat this skill as one that is
+invoked deliberately, not one that fires on its own.
 
 ## The measurement half
 

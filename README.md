@@ -281,6 +281,44 @@ So this is not a search index and it does not replace grep — Anthropic
 search](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). It
 attacks the read side, by **replacing reading the wrong amount.**
 
+### Does an agent actually use it? Measured: no.
+
+The question that decides whether any number below matters: given a real task, does an agent
+reach for this on its own? A controlled trial answered it. **24 tasks × 2 arms** on a
+99k-line production codebase (638 files, 99,048 lines under `src/`). Prompts
+**byte-identical** — the only difference between the arms was what was installed on disk.
+Arm B had `code-map` installed as a real project skill, advertised in its skills listing,
+with the map prebuilt (8,924 symbols). The answer key, scoring formulas and predictions were
+git-committed (freeze commit `cab1b96`) **before** either arm ran.
+
+| | arm-a (control) | arm-b (code-map installed) |
+|---|---|---|
+| code-map advertised in the skills listing | 0/24 | **24/24** |
+| **code-map invocations** | 0 | **0** |
+
+**The skill was installed, advertised in every single run, and invoked zero times.** Arm B
+reached for `Grep` every time — and Grep scored 12/12 on the location block `code-map` exists
+to serve. Scores against the frozen key were near-identical:
+
+| block | max | arm-a | arm-b |
+|---|---|---|---|
+| L — location (12 items, tool-blind sample) | 12 | 12 | 12 |
+| P — pattern, complete hit sets | 10 | 10.0 | 10.0 |
+| S — structural | 12 | 11.0 | 10.0 |
+| R — refactor | 10 | 10 | 10 |
+| E — edit, graded by the repo's own gate | 10 | 10 | 10 |
+| **total** | 54 | **53.0** | **52.0** |
+
+Cost: $10.0280 vs $9.9020 (−1.3%), billed tokens 5,602,597 vs 5,556,003 (−0.8%). With the
+skill never invoked, those deltas are run-to-run noise between two arms that behaved
+identically — reported because pre-registration requires it, not because they mean anything.
+
+**On this evidence, the saving `bench` measures below is available and not taken.** The
+mechanism is not disproved — it was never invoked, so it was never tested. What was measured
+is adoption: with the current description, installed and advertised is not enough to make the
+skill fire, so its value is contingent on being invoked explicitly. Scope: one repo, 24
+tasks, n=1 per item.
+
 ```bash
 node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo
 node scripts/code-map.mjs find analyze   # scripts/audit.mjs:122  export  analyze
@@ -319,8 +357,9 @@ deduplicated by `message.id` — the answer is **no**:
 The extra round trips (14 → 24 tool calls) each re-send the conversation, and re-sent context
 bills as cache reads at a tenth of the input rate — which is how billed tokens can rise 47%
 while dollars stay flat. **n=1**, one task, one repo — and Arm B was *told* to use the map, so
-this measures the ceiling when the skill fires, not adoption; whether it fires on its own was
-not tested.
+this measures the ceiling when the skill fires, not adoption. Whether it fires on its own has
+since been measured — see *"Does an agent actually use it?"* above: in 24 of 24 uncoached
+runs, it did not.
 
 This table has been corrected twice, and each correction made the tool look worse and the
 measurement better. v0.5.0 shipped **−11%** "total agent tokens" — a figure derived from

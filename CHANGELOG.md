@@ -2,6 +2,85 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.7.0] — 2026-08-09
+
+A null result, and it is the headline because it is one: **in a controlled 24-task trial,
+`code-map` — installed as a real project skill, advertised in the skills listing of every
+single run, its map prebuilt — was invoked zero times.** The agent reached for Grep every
+time, and Grep scored 12/12 on the location block the skill exists to serve. This release
+ships no code; it ships the result, in the README and in the skill's own file.
+
+### The trial
+24 tasks × 2 arms on a 99k-line production codebase (638 files, 99,048 lines under `src/`;
+baseline verified green before the trial — `tsc --noEmit` clean, 912 tests passing). Prompts
+**byte-identical**; the only difference between the arms was what was installed on disk.
+Answer key, scoring formulas and predictions were git-committed (freeze commit `cab1b96`)
+**before** either arm ran; the full artefact set — frozen key, per-task prompts, outputs,
+diffs — is at trial commit `f2516b2`. Neither arm was coached, which is the difference from
+the v0.5.0/v0.6.0 A/B, whose treatment arm was told what to run.
+
+| block | max | arm-a | arm-b |
+|---|---|---|---|
+| L — location (12 items, tool-blind sample) | 12 | 12 | 12 |
+| P — pattern, complete hit sets | 10 | 10.0 | 10.0 |
+| S — structural | 12 | 11.0 | 10.0 |
+| R — refactor | 10 | 10 | 10 |
+| E — edit, graded by the repo's own gate | 10 | 10 | 10 |
+| **total** | 54 | **53.0** | **52.0** |
+
+| | arm-a | arm-b | |
+|---|---|---|---|
+| cost | $10.0280 | $9.9020 | −1.3% |
+| billed tokens | 5,602,597 | 5,556,003 | −0.8% |
+| code-map advertised in the skills listing | 0/24 | **24/24** | |
+| **code-map invocations** | 0 | **0** | |
+
+With the skill never invoked, the cost and token deltas are run-to-run noise between two arms
+that behaved identically — reported because pre-registration requires it, not because they
+mean anything.
+
+### Predictions: two were wrong, quoted verbatim
+This project's credibility rests on reporting its own failures, so here they are.
+
+> **P2 — Where it helps.** `code-map` will help the **L** block and will **not** help the
+> **P** block.
+
+**Wrong on the first half, right on the second.** It helped L not at all — because it was
+never used. L came out 12/12 to 12/12 on grep alone.
+
+> **P4 — Adoption.** I predict it will invoke `code-map` on the **L** block and largely
+> ignore it on **P** and **E**. If B never invokes it at all, that is a product finding about
+> the skill's description, not a failed experiment.
+
+**Wrong in the specific, right in the escape clause.** It never invoked it, anywhere, once.
+
+(P1 — cost within ±15% — held, at −1.3%, though attributable to noise rather than the tool.
+P3 — the under-exploration risk — did not trigger: both arms were complete and identical on
+the P and R blocks.)
+
+### What is claimed, and what is not
+- **Claimed:** the saving `bench` measures is **available and not taken.** With its current
+  description, installed-and-advertised does not make the skill fire; its value is contingent
+  on being invoked explicitly.
+- **Not claimed:** that the mechanism is disproved. It was never invoked, so it was never
+  tested. The bench arithmetic (−76% to −85% per location question) is unaffected by this
+  trial.
+- **Scope:** one repo, 24 tasks, n=1 per item. This is not evidence about any other repo.
+
+### Changed
+- `README.md` — new section under Code Map, **"Does an agent actually use it? Measured:
+  no."**, placed above the bench figures rather than under them; the v0.6.0 A/B section now
+  defers to it on the adoption question.
+- `skills/code-map/SKILL.md` — the measured limitation stated before anything else; the bench
+  figures now read unambiguously as *available per question*, realised only on explicit
+  invocation; and a new **"Open question — untested"** section records the hypothesis that
+  the `description:` frontmatter is what fails, not the mechanism — and that testing it
+  requires re-running the trial with a changed description. The description itself is
+  deliberately **not** rewritten: that would be shipping an untested adoption fix on the back
+  of a trial that just demonstrated the cost of untested claims.
+- Versions to 0.7.0 everywhere `check-manifests.mjs` requires. No script changes; the test
+  suite and privacy invariant are untouched (90 tests, 4 suites).
+
 ## [0.6.0] — 2026-08-09
 
 This release corrects this project's own headline claim — for the second time — and ships the
