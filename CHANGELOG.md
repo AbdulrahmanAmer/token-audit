@@ -2,6 +2,78 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.3.0] — 2026-08-08
+
+Adds `code-index`. **Stated honestly up front: measured saving in its home repo was 1–3.4k
+tokens per fix, n=1, with a real confound** — the code was already in context for most of
+those fixes. It is not the headline; the measurement skill is.
+
+### Added
+- `code-index` skill and `/code-index` command.
+- `scripts/code-index.mjs` — a deterministic, greppable fact table, one line per fact:
+  `IS`, `CLI`, `USES`, `IMPORTEDBY`, `SPAWNEDBY`, `GUARD`, `DEFINES`, `WHY`.
+  `--check`, `--stdout`, `--root`, `--config`.
+- `code-index.config.json` — this repo's own config, shipped as the worked example with
+  every field commented. ~10% of a generator like this binds to a repo's house conventions
+  and that 10% is where the value is. (The repo it was first built in is not public, so the
+  worked example is this one; it exercises every field.)
+- `CODE-INDEX.txt` — this repo's generated index, and CI's `--check` target.
+
+### Two properties
+- **Deterministic**: sorted, nothing from the clock or filesystem order, **no generation
+  date**. Meant for a cached prompt prefix, where one volatile byte at the top invalidates
+  every token after it. Pinned by a test that fails on any date, time or absolute path.
+- **Derived, never authored**: `node scripts/code-index.mjs --check` runs in CI.
+
+### Nine defects, each with a test naming it
+Five from the tool's original construction:
+1. A path named in a **comment** became a call edge — repo comments cite files constantly, so
+   the graph was partly a reading of its own prose.
+2. The comment stripper **desynchronised on a regex literal containing a quote**
+   (`/'(?:[^'\\\n]|\\.)*'/`) and let every later comment through. Fixed by making string state
+   **line-local** rather than by writing a better scanner: the worst case becomes one wrong
+   line instead of a whole file, and a real parser is not a defensible dependency for an index.
+3. A **register** naming every file became a caller of every file. A file referencing more than
+   half the **eligible** population is a manifest, not a caller.
+4. The ratio must be taken against the **eligible set**, not the whole tree — padding a repo
+   with docs otherwise makes a register look like a minority and it slips back through.
+5. **Test files were excluded** from the caller set — the group that breaks *first*, reported
+   as absent. They are in it deliberately.
+6. A **spawn target must be executable** (shebang) and the string literal **whitespace-free
+   end to end**; `"run tools/x/gen.mjs"` is a sentence addressed to a human.
+
+Four more found by running the generator on this repository and reading the output:
+7. An **import specifier** counted as a spawn, making `SPAWNEDBY` a wrong copy of `USES`.
+8. A file **copied** (`copyFileSync`) counted as **spawned**.
+9. A flag-shaped **regex literal** (`/--dry-run/`) advertised as a CLI option that does not
+   exist — caused by a string-literal regex that paired one literal's closing quote with the
+   next one's opening quote.
+10. Fixture source inside **template literals** counted as the test file's exports.
+
+### The trap, avoided
+Blast-radius tests assert against a **fresh `build()`**, never the committed artifact. A
+mutated generator never rewrites the file, so a suite reading `CODE-INDEX.txt` stays green
+through any semantic breakage and only the staleness check fires. That trap made this tool's
+first suite dead.
+
+### Honest note on the tests
+Two of these tests were **dead when first written** — built from prose citing a path, which
+never matches an import pattern even with the stripper removed, so they passed against the
+broken generator. The mutation run is what exposed it; the fixtures now use commented-out
+imports. Six mutants are verified against the real generator: unstripped comments (5 red),
+string state carried across lines (2 red), manifest suppression removed (2 red), test files
+excluded (3 red), spawn executability dropped (1 red), and a generation date added (2 red).
+
+### Known limits, stated rather than discovered later
+- **`SPAWNEDBY` under-reports on purpose.** A literal must reach a spawn call directly or
+  through one variable; a path reaching one through a loop variable is missed. A missing edge
+  costs one grep, a wrong edge costs the trust that makes the table worth reading.
+- Every fact is a heuristic. Spot-check before relying on one.
+
+### Changed
+- CI runs `code-index.mjs --check` and asserts no `CLAUDE_PLUGIN_ROOT` survives in any of the
+  three installed skills. 61 tests across 3 suites.
+
 ## [0.2.0] — 2026-08-08
 
 Adds `quiet-tests`, the highest-payoff change measured by v0.1.0: in the repo it was first

@@ -3,7 +3,7 @@ name: token-audit
 description: Measures where a Claude Code session's tokens actually went, by reading the transcript Claude Code already writes. Use when the user asks why a session is expensive, where the context or tokens are going, how to reduce token usage or cost, what is filling the context window, whether a change actually saved tokens, or asks for a before/after comparison of two pieces of work. Also use before designing any token optimisation — an index, a caching scheme, a summarisation step — so the design targets measured waste instead of a guess. Reports re-read cost, repeated test output, shell output by kind, and cost per commit. Aggregates only; transcript content is never printed.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   author: token-audit contributors
 ---
 

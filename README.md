@@ -46,6 +46,7 @@ Then ask *"where did this session's tokens go?"*, or run `/token-audit`.
 |---|---|---|
 | `token-audit` | Reads the transcript Claude Code already writes and reports where a session's tokens went: re-read cost, repeated test output, shell output by kind, cost per commit. | `/token-audit` |
 | `quiet-tests` | Measures how much of a project's test output is per-test PASS announcements, then proposes a patch that withholds only those. Refuses when the projected saving is under 25%. | `/quiet-tests` |
+| `code-index` | Generates a deterministic, greppable fact table — one line per fact — for what you must know about a file without opening it. Config-driven, derived never authored, `--check` in CI. | `/code-index` |
 
 `scripts/check-manifests.mjs` fails CI if a skill ships without a row here, or a row here
 names a skill that does not ship — both are silent failures for whoever installs this.
@@ -161,17 +162,61 @@ line, and the summary. Three mutants are asserted to break it — a loose
 `String(args).includes(marker)`, a filter that also eats the summary, and an inverted verbose
 gate — each run against the real implementation, not a copy.
 
-## What's here, and what isn't
+## Code Index
 
-- **`code-index`** — planned. A generated, cache-stable fact table per source file: what it
-  is, its CLI, its imports, who breaks if you change it, who checks it, and a `file:line`
-  pointer to a load-bearing invariant. Config-driven, because ~10% of such a generator binds
-  to a repo's house conventions and that 10% is where the value is. Measured saving in its
-  home repo was 1–3.4k tokens per fix — real, not transformative, and it will ship described
-  that way.
+One line per fact, answering *"what must I know about this file without opening it?"*
 
-It is held back until it can be shipped with the same standard of evidence as the rest: a
-number, a test that fails when the number is wrong, and a mutant proving the test is alive.
+```
+scripts/audit.mjs	IS	where did this session's tokens actually go?
+scripts/audit.mjs	CLI	--file --json --list --no-paths --per-commit --project
+scripts/audit.mjs	DEFINES	KINDS analyze classify encodeProject listTranscripts
+scripts/audit.mjs	IMPORTEDBY	scripts/test/run-tests.mjs
+scripts/audit.mjs	GUARD	scripts/test/run-tests.mjs
+scripts/audit.mjs	WHY	scripts/audit.mjs:30 NO TOOL-RESULT CONTENT
+```
+
+**What it is worth, stated plainly: 1–3.4k tokens per fix, n=1, with a real confound** — the
+code was already in context for most of those fixes, so some of that saving is not
+attributable to the index. It is **not** the headline of this project. It is a modest,
+reliable saving on one shape of question — *who breaks if I change this* — otherwise answered
+by reading four files. [`CODE-INDEX.txt`](CODE-INDEX.txt) is this repo's own, generated.
+
+```bash
+node scripts/code-index.mjs             # write it
+node scripts/code-index.mjs --check     # CI: fail if stale
+```
+
+**Two properties, or it costs more than it saves:**
+
+1. **Deterministic** — sorted lists, nothing from the clock, nothing from filesystem order,
+   **no generation date.** It is meant for a cached prompt prefix; one volatile byte at the
+   top invalidates every token after it, turning the saving into a cost.
+2. **Derived, never authored** — `--check` runs in CI, so it cannot drift into a confident
+   liar.
+
+**It is config-driven, and that is the design.** About 10% of a generator like this binds to a
+repo's house conventions — header format, argv dispatch shape, where the guard register lives,
+how the codebase writes emphasis — and that 10% is where all the value is.
+[`code-index.config.json`](code-index.config.json) is this repo's, shipped as the worked
+example with every field commented. (The repo this skill was first built in is not public, so
+the worked example is this one; it exercises every field.)
+
+**`SPAWNEDBY` deliberately under-reports.** A spawn is recorded only when a whitespace-free
+string literal reaches a spawn call directly or through one variable *and* the target has a
+shebang. A path reaching a spawn through a loop variable is missed. A missing edge costs one
+grep; a wrong edge costs the trust that makes the table worth reading.
+
+Seven defects have tests naming them — five from the original construction (a path in a
+comment becoming a call edge; a comment stripper desynchronising on a regex literal containing
+a quote; a register becoming a caller of everything; test files excluded from the caller set,
+which are the group that breaks *first*; a spawn target that cannot be executed), and four
+more found by running the generator on this repository and reading the output (an import
+specifier counted as a spawn, a copied file counted as spawned, a flag-shaped regex literal
+advertised as a CLI option, and fixture source inside template literals counted as exports).
+
+Every one is mutation-verified against the real generator. Two of those tests were **dead when
+first written** — built from prose citing a path, which never matches an import pattern even
+with the stripper removed — and only the mutation run exposed it.
 
 ## Development
 
@@ -179,6 +224,7 @@ number, a test that fails when the number is wrong, and a mutant proving the tes
 npm test                               # every suite, one exit code
 VERBOSE=1 npm test                     # per-test lines restored
 node scripts/check-manifests.mjs       # manifests, skills, README and scripts must agree
+node scripts/code-index.mjs --check    # the committed fact table matches a fresh build
 ```
 
 CI runs all of it on every push, plus `bash -n install.sh`.

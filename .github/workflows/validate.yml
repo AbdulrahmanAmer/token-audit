@@ -20,7 +20,12 @@ jobs:
       - name: Manifests, skills, README and referenced scripts agree
         run: node scripts/check-manifests.mjs
       - name: Syntax
-        run: node --check scripts/audit.mjs && node --check scripts/quiet.mjs && node --check scripts/quiet-tests.mjs
+        run: node --check scripts/audit.mjs && node --check scripts/quiet.mjs && node --check scripts/quiet-tests.mjs && node --check scripts/code-index.mjs
+      - name: The committed code index is not stale
+        # Derived, never authored. Without this the fact table drifts and becomes a confident
+        # liar — worse than absent, because people stop double-checking a table that has been
+        # right before.
+        run: node scripts/code-index.mjs --check
       - name: Tests (privacy invariant + correctness + quiet-tests)
         run: node scripts/test/run-all.mjs
       - name: Installer is valid shell
@@ -43,5 +48,6 @@ jobs:
           # every path in the skill body is broken and the skill fails at first use.
           test "$(grep -c 'CLAUDE_PLUGIN_ROOT' "$RUNNER_TEMP/skilltest/token-audit/SKILL.md")" = "0"
           test "$(grep -c 'CLAUDE_PLUGIN_ROOT' "$RUNNER_TEMP/skilltest/quiet-tests/SKILL.md")" = "0"
+          test "$(grep -c 'CLAUDE_PLUGIN_ROOT' "$RUNNER_TEMP/skilltest/code-index/SKILL.md")" = "0"
       - name: No dependencies, and none can be added by accident
         run: node -e "const p=require('./package.json');if(p.dependencies||p.devDependencies)throw new Error('a dependency was added — that changes what installing this costs a stranger')"

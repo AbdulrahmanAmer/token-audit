@@ -1,0 +1,39 @@
+# CODE-INDEX — derived by scripts/code-index.mjs. Do not edit; re-run it.
+# One line per fact: <path> <KIND> <value>. Sorted and deterministic by construction.
+
+scripts/audit.mjs	IS	where did this session's tokens actually go?
+scripts/audit.mjs	CLI	--dry-run
+scripts/audit.mjs	DEFINES	KINDS classify
+scripts/audit.mjs	IMPORTEDBY	scripts/test/run-tests.mjs
+scripts/audit.mjs	SPAWNEDBY	scripts/test/run-tests.mjs
+scripts/audit.mjs	GUARD	scripts/test/run-tests.mjs
+scripts/audit.mjs	WHY	scripts/audit.mjs:30 NO TOOL-RESULT CONTENT
+scripts/check-manifests.mjs	IS	the two manifests and the skill must agree about what this is.
+scripts/code-index.mjs	IS	one line per fact: what must I know about this file without opening it?
+scripts/code-index.mjs	CLI	--check --config --root --stdout
+scripts/code-index.mjs	DEFINES	DEFAULT_CONFIG loadConfig render stripComments
+scripts/code-index.mjs	IMPORTEDBY	scripts/test/code-index.test.mjs
+scripts/code-index.mjs	GUARD	scripts/test/code-index.test.mjs
+scripts/code-index.mjs	WHY	scripts/code-index.mjs:17 OR IT COSTS MORE THAN IT SAVES
+scripts/code-index.mjs	WHY	scripts/code-index.mjs:20 NO GENERATION DATE
+scripts/quiet-tests.mjs	IS	find out whether a repo's test output is worth quieting, and by how much.
+scripts/quiet-tests.mjs	CLI	--apply --cmd --dir --json
+scripts/quiet-tests.mjs	DEFINES	MARKERS SUMMARY_PATTERNS WORTH_DOING applyPatch detectCommand detectGates detectMarker detectSummary findEmitters measure proposePatch renderDiff report runSuite
+scripts/quiet-tests.mjs	IMPORTEDBY	scripts/test/quiet-tests.test.mjs
+scripts/quiet-tests.mjs	GUARD	scripts/test/quiet-tests.test.mjs
+scripts/quiet.mjs	IS	withhold PASS announcements from a test run, and nothing else.
+scripts/quiet.mjs	CLI	--verbose
+scripts/quiet.mjs	DEFINES	DEFAULT_MARKER SUMMARY_RE default install isVerbose shouldWithhold
+scripts/quiet.mjs	IMPORTEDBY	scripts/test/quiet-tests.test.mjs
+scripts/quiet.mjs	GUARD	scripts/test/quiet-tests.test.mjs
+scripts/quiet.mjs	WHY	scripts/quiet.mjs:16 IT CHANGES NOTHING ABOUT ASSERTIONS
+scripts/quiet.mjs	WHY	scripts/quiet.mjs:17 ANNOUNCING A PASS
+scripts/test/code-index.test.mjs	IS	tests for the generated fact table.
+scripts/test/code-index.test.mjs	USES	scripts/code-index.mjs
+scripts/test/code-index.test.mjs	WHY	scripts/test/code-index.test.mjs:48 CACHED PROMPT PREFIX
+scripts/test/code-index.test.mjs	WHY	scripts/test/code-index.test.mjs:92 A COMMENTED-OUT IMPORT
+scripts/test/quiet-tests.test.mjs	IS	tests for the quiet-tests skill.
+scripts/test/quiet-tests.test.mjs	USES	scripts/quiet-tests.mjs scripts/quiet.mjs
+scripts/test/run-all.mjs	IS	every suite in this repo, one exit code.
+scripts/test/run-tests.mjs	IS	tests for the token audit.
+scripts/test/run-tests.mjs	USES	scripts/audit.mjs

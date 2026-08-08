@@ -28,7 +28,8 @@ node "$SRC/scripts/check-manifests.mjs" >/dev/null || { echo "manifests disagree
 # Duplicating them per skill would let two installed copies drift apart, and the symptom of
 # that is a report whose numbers depend on which skill asked for them.
 mkdir -p "$DEST/scripts/test"
-cp "$SRC/scripts/audit.mjs" "$SRC/scripts/quiet.mjs" "$SRC/scripts/quiet-tests.mjs" "$DEST/scripts/"
+cp "$SRC/scripts/audit.mjs" "$SRC/scripts/quiet.mjs" "$SRC/scripts/quiet-tests.mjs" "$SRC/scripts/code-index.mjs" "$DEST/scripts/"
+cp "$SRC/code-index.config.json" "$DEST/"
 cp "$SRC/scripts/test/run-tests.mjs" "$SRC/scripts/test/run-all.mjs" "$SRC"/scripts/test/*.test.mjs "$DEST/scripts/test/"
 cp "$SRC/LICENSE" "$DEST/LICENSE"
 
