@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "token-audit",
+  "description": "Token Audit — measure where a Claude Code session's tokens actually went.",
+  "owner": {
+    "name": "AbdulrahmanAmer",
+    "url": "https://github.com/AbdulrahmanAmer"
+  },
+  "plugins": [
+    {
+      "name": "token-audit",
+      "description": "Reads the transcript Claude Code already writes and reports where the tokens went: re-read cost, repeated test output, cost per commit. Aggregates only — transcript content is never printed.",
+      "author": { "name": "AbdulrahmanAmer" },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/AbdulrahmanAmer/token-audit"
+    }
+  ]
+}

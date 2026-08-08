@@ -1,0 +1,13 @@
+{
+  "name": "token-audit",
+  "version": "0.1.0",
+  "description": "Measure where a Claude Code session's tokens actually went. Reads the transcript Claude Code already writes and reports re-read cost, repeated test output, and cost per commit — so token optimisation targets measured waste instead of a plausible guess. Never prints transcript content.",
+  "author": {
+    "name": "AbdulrahmanAmer",
+    "url": "https://github.com/AbdulrahmanAmer"
+  },
+  "homepage": "https://github.com/AbdulrahmanAmer/token-audit",
+  "repository": "https://github.com/AbdulrahmanAmer/token-audit",
+  "license": "MIT",
+  "keywords": ["tokens", "cost", "measurement", "context", "profiling", "observability"]
+}
