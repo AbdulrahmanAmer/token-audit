@@ -93,6 +93,8 @@ node scripts/audit.mjs --per-commit        # cost per commit, for before/after w
 node scripts/audit.mjs --json              # same numbers, machine-readable
 node scripts/audit.mjs --no-paths          # withhold file paths
 node scripts/audit.mjs --no-subagents      # exclude delegated work (included by default)
+node scripts/audit.mjs --rate-in 5 --rate-out 25 --rate-cache-read 0.5 --rate-cache-write 6.25
+                                           # $/MTok assumptions for the cost estimate
 ```
 
 **Subagent work is included by default, and it is not optional detail.** Claude Code writes a
@@ -105,18 +107,29 @@ agents, every number you got before v0.5.0 was too low.
 
 | Section | The question it answers |
 |---|---|
-| `WHERE THE TOKENS WENT` | Which tool is actually expensive. Usually not the one you'd name. |
+| `BILLED TOKENS` | **The headline: what the session actually cost.** Input/output/cache tokens counted by the API, and an estimated dollar figure. Everything below it is a lower bound on tool output. |
+| `WHERE THE TOOL OUTPUT WENT` | Which tool is actually expensive. Usually not the one you'd name. |
 | `SHELL OUTPUT BY KIND` | Reading, searching, testing, building — where shell output concentrates. |
 | `FILE READS` | **`RE-READ COST`** — context already paid for once and bought again. |
 | `TEST / BUILD OUTPUT` | Repeated-text share. Above ~25%, a quiet mode is the cheapest saving available. |
 | `MOST EXPENSIVE FILES` | The file you read twelve times. Nearly always a surprise. |
 | `COST PER COMMIT` | Same-shaped task with and without a change — the honest A/B. |
 
-Two caveats worth stating out loud, because a measurement tool that oversells is worse than
+Billed tokens are read from the `usage` object Claude Code writes on assistant turns,
+deduplicated by `message.id` — one API call is written once per content block, and summing
+the records double-counts the bill ~2.8×. The dollar line multiplies those counts by
+published rates ($5 in / $25 out / $0.50 cache-read / $6.25 cache-write per MTok by default);
+the rates are assumptions, not measurements — override them with the `--rate-*` flags. Older
+transcripts without `usage` say so plainly instead of printing $0.00.
+
+Three caveats worth stating out loud, because a measurement tool that oversells is worse than
 no measurement tool:
 
-- **Tokens are estimated at 3.6 bytes each, not counted.** There is no offline tokenizer.
-  The ratios are the point; don't quote the absolute figures as exact.
+- **The byte-derived figures are estimated at 3.6 bytes per token, not counted**, and they
+  cover tool output only — on the sessions measured here that was a few percent of the bill.
+  They answer "which tool was expensive", not "what did this cost"; `BILLED TOKENS` answers
+  that.
+- **The dollar figure is only as right as the rates you feed it.** The token counts are exact.
 - **The current session's transcript lags behind live.** When measuring work you just
   finished, use `--per-commit` boundaries rather than a delta against the last line.
 
@@ -294,22 +307,34 @@ Two subagents, same model, same repo, the same five orientation questions requir
 across four files. Arm A used normal tools; Arm B was told the map existed and to use the
 `offset`/`limit` that `find` prints. **Both got all five answers right.**
 
+Measured from the `usage` records the API bills on — the accounting v0.6.0 added,
+deduplicated by `message.id` — the answer is **no**:
+
 | | A (control) | B (code-map) | |
 |---|---|---|---|
-| all tool output | 15,601 tok | 9,393 tok | **−40%** |
-| read tokens | 10,462 | 5,863 | **−44%** |
-| whole-file reads | 2 | **0** | eliminated |
-| tool calls | 14 | 24 | **+71%** |
-| **total agent tokens** | **64,538** | **57,584** | **−11%** |
+| billed tokens | 375,061 | 551,067 | **+47%** |
+| cost @ Opus rates | $0.7252 | $0.7296 | **+0.6% — parity** |
 
-**Take −11% as the headline, not −40%.** Tool output fell 40%; the extra round trips ate most
-of it back, because each one re-sends the conversation. **n=1**, one task, one repo — and Arm B
-was *told* to use the map, so this is the ceiling when the skill fires, not evidence that it
-fires on its own.
+**`code-map` used 47% more tokens for the same money.** It did not save anything measurable.
+The extra round trips (14 → 24 tool calls) each re-send the conversation, and re-sent context
+bills as cache reads at a tenth of the input rate — which is how billed tokens can rise 47%
+while dollars stay flat. **n=1**, one task, one repo — and Arm B was *told* to use the map, so
+this measures the ceiling when the skill fires, not adoption; whether it fires on its own was
+not tested.
+
+This table has been corrected twice, and each correction made the tool look worse and the
+measurement better. v0.5.0 shipped **−11%** "total agent tokens" — a figure derived from
+tool-output bytes, which turn out to be a few percent of what a session actually bills. The
+first `usage`-based recomputation said **−8%** cost — wrong again, because summing every
+transcript record double-counts each API call ~2.8× (Claude Code writes one record per
+content block). The current figures come from `usage` deduplicated by `message.id` and are
+what `audit.mjs` itself now reports. The byte-level intermediates remain true as far as they
+go — tool output fell 40% (15,601 → 9,393 tok), whole-file reads went 2 → 0 — but they are a
+lower bound on tool output, not the bill.
 
 The run also paid for itself twice: it exposed that `find` missed both function-local consts in
 the question set, and each miss cost a fallback round trip. Locals are now indexed (ranked
-below real declarations), which is where the +71% came from and the first thing to improve.
+below real declarations), which is where the extra calls came from and the first thing to improve.
 
 ### Why you can act on it without checking
 

@@ -3,11 +3,11 @@
 
 scripts/audit.mjs	IS	where did this session's tokens actually go?
 scripts/audit.mjs	CLI	--dry-run
-scripts/audit.mjs	DEFINES	KINDS classify
+scripts/audit.mjs	DEFINES	KINDS RATES classify estimateCost
 scripts/audit.mjs	IMPORTEDBY	scripts/test/run-tests.mjs
 scripts/audit.mjs	SPAWNEDBY	scripts/test/run-tests.mjs
 scripts/audit.mjs	GUARD	scripts/test/run-tests.mjs
-scripts/audit.mjs	WHY	scripts/audit.mjs:31 NO TOOL-RESULT CONTENT
+scripts/audit.mjs	WHY	scripts/audit.mjs:33 NO TOOL-RESULT CONTENT
 scripts/check-manifests.mjs	IS	the two manifests and the skill must agree about what this is.
 scripts/code-index.mjs	IS	one line per fact: what must I know about this file without opening it?
 scripts/code-index.mjs	CLI	--check --config --root --stdout

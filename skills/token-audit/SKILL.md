@@ -1,9 +1,9 @@
 ---
 name: token-audit
-description: Measures where a Claude Code session's tokens actually went, by reading the transcript Claude Code already writes. Use when the user asks why a session is expensive, where the context or tokens are going, how to reduce token usage or cost, what is filling the context window, whether a change actually saved tokens, or asks for a before/after comparison of two pieces of work. Also use before designing any token optimisation — an index, a caching scheme, a summarisation step — so the design targets measured waste instead of a guess. Reports re-read cost, repeated test output, shell output by kind, and cost per commit. Aggregates only; transcript content is never printed.
+description: Measures where a Claude Code session's tokens actually went, by reading the transcript Claude Code already writes. Use when the user asks why a session is expensive, where the context or tokens are going, how to reduce token usage or cost, what is filling the context window, whether a change actually saved tokens, or asks for a before/after comparison of two pieces of work. Also use before designing any token optimisation — an index, a caching scheme, a summarisation step — so the design targets measured waste instead of a guess. Reports billed tokens and estimated dollar cost from the API's own usage records, plus re-read cost, repeated test output, shell output by kind, and cost per commit. Aggregates only; transcript content is never printed.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
   author: token-audit contributors
 ---
 
@@ -31,6 +31,8 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --list              # what transcri
 node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --per-commit        # cost per commit (A/B work)
 node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --json              # same numbers, machine-readable
 node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --no-paths          # withhold file paths
+node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --rate-in 5 --rate-out 25 --rate-cache-read 0.5 --rate-cache-write 6.25
+                                                                 # $/MTok for the cost line
 ```
 
 Node 18+. No dependencies, no network, writes nothing — this script reads transcripts and prints; it never writes anywhere.
@@ -44,16 +46,22 @@ delta taken against the very last line.
 
 | Section | The question it answers |
 |---|---|
-| `WHERE THE TOKENS WENT` | Which tool is actually expensive. Usually not the one you'd name. |
+| `BILLED TOKENS` | **What the session actually cost — lead with this.** Input/output/cache tokens counted by the API (deduplicated by message id), and an estimated dollar figure. |
+| `WHERE THE TOOL OUTPUT WENT` | Which tool is actually expensive. Usually not the one you'd name. |
 | `SHELL OUTPUT BY KIND` | Reading, searching, testing, building — where shell output concentrates. |
-| `FILE READS` | **`RE-READ COST` is the headline**: context already paid for once and bought again. |
+| `FILE READS` | **`RE-READ COST`**: context already paid for once and bought again. |
 | `TEST / BUILD OUTPUT` | Repeated-text share. Above ~25%, a quiet mode is the cheapest available saving. |
 | `MOST EXPENSIVE FILES` | The file read twelve times. Nearly always a surprise. |
 | `COST PER COMMIT` | For before/after comparisons — same-shaped task, with and without a change. |
 
-Tokens are **estimated** at 3.6 bytes each, not counted — there is no offline tokenizer.
-The ratios are the point; do not quote the absolute figures as exact, and say so when
-reporting them to a user.
+**Lead with `BILLED TOKENS` when reporting.** Those counts come from the `usage` records the
+API bills on — they are counted, not estimated. The dollar line is those counts at published
+rates; call it an estimate and name the rates (override with the `--rate-*` flags). Every
+figure below that section is derived from tool-result **bytes** at ~3.6 bytes per token: a
+**lower bound covering tool output only**, historically a few percent of the bill. Quote the
+byte figures for *which tool was expensive*, never for *what the session cost*. A transcript
+with no usage accounting (older Claude Code) is reported as unknown cost, not $0 — pass that
+on honestly rather than substituting the byte total.
 
 ## What to do with the answer
 

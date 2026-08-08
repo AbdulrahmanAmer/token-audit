@@ -8,6 +8,8 @@
 //   node scripts/audit.mjs --per-commit       # cost of each commit, for A/B comparisons
 //   node scripts/audit.mjs --json             # machine-readable, same numbers
 //   node scripts/audit.mjs --no-subagents     # exclude delegated work (included by default)
+//   node scripts/audit.mjs --rate-in 5 --rate-out 25 --rate-cache-read 0.5 --rate-cache-write 6.25
+//                                             # $/MTok assumptions for the cost estimate
 //
 // ── What this is for ──────────────────────────────────────────────────────────────────
 //
@@ -32,7 +34,7 @@
 //
 // Result bodies are measured by LENGTH and discarded. Commands are classified into a fixed
 // vocabulary of kinds and discarded. What can reach the output is: counts, byte totals,
-// tool names, the fixed kind vocabulary, and file paths.
+// token and dollar totals, tool names, the fixed kind vocabulary, and file paths.
 //
 // File paths are the one judgement call, and they are opt-out (`--no-paths`) rather than
 // opt-in, because "which file did I read twelve times" is the single most actionable line
@@ -55,6 +57,30 @@ const PROJECTS = join(homedir(), '.claude', 'projects');
 // the range observed across mixed transcripts. Stated here so nobody mistakes it for exact.
 const BYTES_PER_TOKEN = 3.6;
 const tok = (bytes) => Math.round(bytes / BYTES_PER_TOKEN);
+
+// ── Billing rates ─────────────────────────────────────────────────────────────────────
+//
+// $ per million tokens. These are PUBLISHED-RATE ASSUMPTIONS (Opus rates at the time of
+// writing), not anything measured from the transcript — the transcript records token
+// counts, never prices. If the session ran on a different model, or the price list moved,
+// the token figures stay right and only the dollar line shifts. Override per run with
+// --rate-in / --rate-out / --rate-cache-read / --rate-cache-write.
+export const RATES = {
+  inPerMTok: 5,
+  outPerMTok: 25,
+  cacheReadPerMTok: 0.5,
+  cacheWritePerMTok: 6.25,
+};
+
+/** Dollars for a usage aggregate, at the given $/MTok rates. Pure arithmetic, pinned by test. */
+export function estimateCost(u, rates = RATES) {
+  return (
+    u.inputTokens * rates.inPerMTok +
+    u.outputTokens * rates.outPerMTok +
+    u.cacheReadTokens * rates.cacheReadPerMTok +
+    u.cacheWriteTokens * rates.cacheWritePerMTok
+  ) / 1e6;
+}
 
 // ── The fixed kind vocabulary ─────────────────────────────────────────────────────────
 //
@@ -176,6 +202,8 @@ export async function analyze(pathOrPaths) {
   let testBytes = 0, testLines = 0;
   const testDistinct = new Set();
   let totalBytes = 0, totalCalls = 0, assistantTurns = 0;
+  const usageById = new Map();             // message id -> max-per-field usage snapshot
+  let usageRecords = 0;
 
   const bump = (map, key, bytes) => {
     const e = map.get(key) || { calls: 0, bytes: 0 };
@@ -187,7 +215,41 @@ export async function analyze(pathOrPaths) {
   for await (const line of rl) {
     if (!line.trim()) continue;
     let ev; try { ev = JSON.parse(line); } catch { continue; }   // a torn last line is normal
-    if (ev.type === 'assistant') assistantTurns++;
+    if (ev.type === 'assistant') {
+      assistantTurns++;
+      // Billing truth lives here, not in result bytes. One API call is written to the
+      // transcript as SEVERAL assistant records — one per content block — each carrying a
+      // usage snapshot taken mid-stream: input and cache fields repeat unchanged while
+      // output_tokens climbs toward its final value. Summing every record therefore bills
+      // the same call once per block (2.8x on the transcript this was verified against —
+      // and the giveaway is that each call's cache_read equals exactly the sum of all
+      // PRIOR calls' cache writes, which only one series of distinct calls can produce).
+      // So: dedup by message.id, keeping each field's maximum — the final snapshot —
+      // which is what the API charged.
+      //
+      // Privacy: exactly four fields are read, each coerced to a number. The message id
+      // is a map key that never leaves this function; nothing else in `usage` — or
+      // smuggled into it — can travel.
+      const u = ev.message?.usage;
+      if (u && typeof u === 'object') {
+        usageRecords++;
+        const rec = {
+          in: Number(u.input_tokens) || 0,
+          out: Number(u.output_tokens) || 0,
+          read: Number(u.cache_read_input_tokens) || 0,
+          write: Number(u.cache_creation_input_tokens) || 0,
+        };
+        const id = typeof ev.message.id === 'string' && ev.message.id ? ev.message.id : `(no-id-${usageRecords})`;
+        const prev = usageById.get(id);
+        if (!prev) usageById.set(id, rec);
+        else {
+          prev.in = Math.max(prev.in, rec.in);
+          prev.out = Math.max(prev.out, rec.out);
+          prev.read = Math.max(prev.read, rec.read);
+          prev.write = Math.max(prev.write, rec.write);
+        }
+      }
+    }
     const content = Array.isArray(ev.message?.content) ? ev.message.content : [];
 
     for (const block of content) {
@@ -245,12 +307,26 @@ export async function analyze(pathOrPaths) {
     .sort((a, b) => b.bytes - a.bytes);
   const repeats = readRows.filter((r) => r.n > 1);
 
+  const usage = {
+    records: usageRecords,       // raw assistant records that carried a usage object
+    apiCalls: usageById.size,    // distinct billed API calls after dedup by message id
+    inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, billedTokens: 0,
+  };
+  for (const r of usageById.values()) {
+    usage.inputTokens += r.in;
+    usage.outputTokens += r.out;
+    usage.cacheReadTokens += r.read;
+    usage.cacheWriteTokens += r.write;
+  }
+  usage.billedTokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+
   return {
     path: paths[0],
     sources: paths.length,
     assistantTurns,
     totalCalls,
     totalBytes,
+    usage,
     byTool: [...byTool.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.bytes - a.bytes),
     byKind: [...byKind.entries()].map(([kind, v]) => ({ kind, ...v })).sort((a, b) => b.bytes - a.bytes),
     reads: readRows,
@@ -279,14 +355,37 @@ export async function analyze(pathOrPaths) {
 const pct = (x) => `${Math.round(x * 100)}%`;
 const n = (x) => x.toLocaleString('en-US');
 
-function render(a, { showPaths, perCommit }) {
+function render(a, { showPaths, perCommit, rates = RATES }) {
   const L = [];
   L.push(`transcript: ${basename(a.path)}${a.subagents ? ` + ${a.subagents} subagent transcript${a.subagents > 1 ? 's' : ''}` : ''}`);
-  L.push(`${n(a.assistantTurns)} assistant turns, ${n(a.totalCalls)} tool results, ~${n(tok(a.totalBytes))} tokens taken in`);
+  L.push(`${n(a.assistantTurns)} assistant turns, ${n(a.totalCalls)} tool results, ~${n(tok(a.totalBytes))} tok of tool output received`);
+  L.push('  (a lower bound covering tool output only — the bill is the BILLED TOKENS section)');
   if (a.subagents) L.push('  (subagent work is included — it is invisible in the parent transcript)');
   L.push('');
 
-  L.push('WHERE THE TOKENS WENT');
+  // The honest headline. Byte figures answer "which tool was expensive"; this answers
+  // "what did the session cost", and the two differ by the entire context window that
+  // every API call re-reads.
+  const u = a.usage;
+  L.push('BILLED TOKENS  (what the API charged, from the usage records in the transcript)');
+  if (!u || !u.apiCalls) {
+    L.push('  no usage accounting found in this transcript — older Claude Code versions did');
+    L.push('  not record it. Billed tokens and cost are UNKNOWN; the byte figures below are');
+    L.push('  a lower bound covering tool output only, not a substitute for the bill.');
+  } else {
+    const w = 13;
+    L.push(`  input        ${n(u.inputTokens).padStart(w)}`);
+    L.push(`  output       ${n(u.outputTokens).padStart(w)}`);
+    L.push(`  cache read   ${n(u.cacheReadTokens).padStart(w)}`);
+    L.push(`  cache write  ${n(u.cacheWriteTokens).padStart(w)}`);
+    L.push(`  billed total ${n(u.billedTokens).padStart(w)}   across ${n(u.apiCalls)} API calls (${n(u.records)} usage records)`);
+    L.push(`  est. cost    ${('$' + estimateCost(u, rates).toFixed(4)).padStart(w)}   at $${rates.inPerMTok} in / $${rates.outPerMTok} out / $${rates.cacheReadPerMTok} cache-read / $${rates.cacheWritePerMTok} cache-write per MTok`);
+    L.push('      rates are published-rate assumptions, not measured — override with');
+    L.push('      --rate-in --rate-out --rate-cache-read --rate-cache-write');
+  }
+  L.push('');
+
+  L.push('WHERE THE TOOL OUTPUT WENT  (tool-result bytes only — a lower bound, not the bill)');
   for (const t of a.byTool.slice(0, 8)) {
     L.push(`  ${t.name.padEnd(14)} ${String(n(tok(t.bytes))).padStart(9)} tok  ${String(n(t.calls)).padStart(5)} calls`);
   }
@@ -378,16 +477,32 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   if (!existsSync(target)) { console.error(`no such transcript: ${target}`); process.exit(1); }
 
+  // Rate overrides, $/MTok. Non-numeric values are ignored rather than poisoning the
+  // arithmetic with NaN.
+  const rates = { ...RATES };
+  for (const [f, k] of [
+    ['--rate-in', 'inPerMTok'], ['--rate-out', 'outPerMTok'],
+    ['--rate-cache-read', 'cacheReadPerMTok'], ['--rate-cache-write', 'cacheWritePerMTok'],
+  ]) {
+    const v = value(f);
+    if (v != null && Number.isFinite(Number(v))) rates[k] = Number(v);
+  }
+
   // Subagent work is part of what the session cost, so it is included by default. Anything
   // else reports a delegating session as nearly free.
   const subs = flag('--no-subagents') ? [] : subagentsFor(target);
   const result = await analyze([target, ...subs]);
   result.subagents = subs.length;
   if (flag('--json')) {
+    // Cost is null, not $0, when the transcript carries no usage accounting.
+    const withCost = {
+      ...result, rates,
+      estimatedCostUSD: result.usage.apiCalls ? estimateCost(result.usage, rates) : null,
+    };
     // Paths are stripped from JSON unless asked for, same rule as the text report.
-    const out = flag('--no-paths') ? { ...result, path: basename(result.path), reads: [] } : result;
+    const out = flag('--no-paths') ? { ...withCost, path: basename(withCost.path), reads: [] } : withCost;
     console.log(JSON.stringify(out, null, 2));
   } else {
-    console.log(render(result, { showPaths: !flag('--no-paths'), perCommit: flag('--per-commit') }));
+    console.log(render(result, { showPaths: !flag('--no-paths'), perCommit: flag('--per-commit'), rates }));
   }
 }

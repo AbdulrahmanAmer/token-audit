@@ -2,7 +2,89 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.6.0] — 2026-08-09
+
+This release corrects this project's own headline claim — for the second time — and ships the
+accounting that makes a third correction unlikely. The short version: **the A/B result for
+`code-map` is not −11%. It is +47% billed tokens at cost parity.** The tool did not save
+anything measurable in that trial.
+
+### Added: billed tokens and estimated cost, from the transcript's own `usage` records
+`audit.mjs` previously measured **tool-result bytes only**. On the A/B control transcript that
+was 15,601 tokens against 375,061 actually billed — about **4% of the bill** — yet every cost
+claim this project shipped rested on it. Claude Code writes a full `usage` object
+(input / output / cache-read / cache-creation) on every assistant turn; the report now reads it.
+
+- New `BILLED TOKENS` section, **above** the byte figures, because it is the honest headline:
+  input, output, cache read, cache write, billed total, API-call count, and an estimated
+  dollar cost.
+- Rates are declared constants (`RATES`) commented as **published-rate assumptions, not
+  measurements** — $5 in / $25 out / $0.50 cache-read / $6.25 cache-write per MTok — and
+  overridable per run via `--rate-in`, `--rate-out`, `--rate-cache-read`, `--rate-cache-write`.
+- The old byte figure is kept — it is still the right number for "which tool was expensive" —
+  but is now labelled a **lower bound covering tool output only**, and its section is renamed
+  `WHERE THE TOOL OUTPUT WENT`.
+- Transcripts that predate `usage` accounting say **"no usage accounting found"** rather than
+  printing $0.00; `--json` carries `estimatedCostUSD: null` for them.
+- Privacy unchanged and extended: only the four numeric `usage` fields are read, each coerced
+  to a number. The test suite plants a canary inside `usage` itself and in the message id and
+  asserts neither can surface.
+
+### Fixed: summing `usage` per record double-counts every API call ~2.8×
+Found while implementing the feature, by summing the two A/B transcripts and checking the
+result against raw records: Claude Code writes one transcript record **per content block**,
+all sharing one `message.id`, each carrying a mid-stream `usage` snapshot (input and cache
+fields repeat unchanged; `output_tokens` climbs toward its final value). The control
+transcript holds 23 usage records for **8 API calls**. Summing records triple-counted most of
+the bill. The conclusion rests on that record-to-id ratio; in the control transcript the cache
+arithmetic corroborates it (each call's `cache_read` equals the running sum of prior calls'
+cache writes — 0 → 28,797 → 34,406 → 35,272), though not in the B transcript, which inherited
+a warm cache prefix from its parent session.
+
+`analyze()` therefore deduplicates by `message.id`, keeping each field's maximum (the final
+snapshot), and reports both counts: distinct API calls and raw usage records.
+
+### Corrected: the `code-map` A/B, now three claims deep
+Each correction came from making the measurement stricter, and each made the result worse:
+
+| claim | source | status |
+|---|---|---|
+| **−11%** "total agent tokens" | tool-output bytes (~4% of the bill) | shipped in v0.5.0 — **wrong** |
+| **−8%** cost | per-record `usage` sum | wrong — double-counted ~2.8× |
+| **+47% billed tokens, +0.6% cost** | `usage` deduped by `message.id` | current, verified twice |
+
+The corrected table (n=1, one task, one repo, Arm B *told* to use the map — a ceiling, not
+adoption):
+
+| | A (control) | B (code-map) | |
+|---|---|---|---|
+| billed tokens | 375,061 | 551,067 | **+47%** |
+| cost @ Opus rates | $0.7252 | $0.7296 | **+0.6% — parity** |
+
+README, `skills/token-audit/SKILL.md` and `skills/code-map/SKILL.md` updated to match: the
+skill now leads with billed tokens, names the byte figure a lower bound, and the `code-map`
+bench figures (−76% to −85%) are explicitly a saving *available* per question, not one
+measured as *realised* by an agent. A note under [0.5.0] below points here; the historical
+entry itself is left as written, because it was accurate to what was known and rewriting it
+would hide the error.
+
+### Tests
+90 across 4 suites (was 85). New: multi-transcript `usage` summation against a hand-computed
+fixture (including the dedup-keeps-final-snapshot case), per-rate cost pins plus a mixed
+hand-computed dollar total, a CLI test that the billed headline comes from `usage` and not
+from bytes (including `--rate-*` override), absence-reported-not-$0.00, and the
+canary-inside-`usage` test. Mutation-verified: summing only `input_tokens` (3 red), dropping
+the cache-read term from the cost (2 red), printing the byte total as the billed headline
+(1 red).
+
 ## [0.5.0] — 2026-08-08
+
+> **Correction (v0.6.0):** the A/B table below is superseded. Its "total agent tokens −11%"
+> row was computed from tool-output bytes, which are ~4% of what the session actually billed.
+> Recomputed from the API's own `usage` records, deduplicated by `message.id`, the result is
+> **+47% billed tokens at cost parity** — see [0.6.0]. The byte-level rows (tool output,
+> reads, tool calls) remain accurate as byte measurements. The entry is otherwise left as
+> written: it was accurate to what was known at the time.
 
 The first **end-to-end** evidence in this project, and a defect the experiment found in the
 tool that has been measuring everything else.

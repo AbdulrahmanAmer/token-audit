@@ -5,3 +5,5 @@ node_modules/
 
 # code-map cache: derived, per-machine, never committed
 .claude/code-map/
+
+.takeover/
