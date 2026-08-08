@@ -2,6 +2,57 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.7.1] — 2026-08-09
+
+**The open question from v0.7.0 is answered: no.** One release ago this project shipped the
+hypothesis that `code-map`'s `description:` frontmatter was what kept it from firing, and
+labelled it untested. It has now been tested and **refuted**. This entry corrects a
+hypothesis shipped one release earlier — recorded plainly, because correcting itself in
+public is this project's method, not an embarrassment to smooth over.
+
+### The follow-up trial
+Same clone, same frozen tasks, same model and effort; **only the skill's `description:`
+frontmatter changed**. v1 (651 chars) buried the trigger behind mechanism and ended with
+*"fall back to Grep on a miss"* — which reads as standing permission to use Grep. v2
+(444 chars) leads with the trigger and instructs the preference outright: *"Run this BEFORE
+reaching for Grep … Prefer it over Grep for locating a name."* Both descriptions are
+preserved in the trial's frozen artefacts (`skill-description-v1.md`, `-v2.md`; trial commit
+`e2ccc7c`).
+
+| description | runs | advertised | **invocations** | answers correct |
+|---|---|---|---|---|
+| v1 | 24 | 24/24 | **0** | 12/12 on L |
+| v2 — "prefer over Grep" | 6 | 6/6 | **0** | 6/6 |
+| combined | **30** | 30/30 | **0** | — |
+
+Every v2 run was verified to carry the new description in its skills listing; all six used
+Grep and Read, and all six answered correctly.
+
+### The stronger conclusion
+> An installed, advertised, plainly-described skill still loses to `Grep` on the exact task
+> it was built for — because `Grep` already answers that task correctly, in one call, with no
+> setup. `code-map` is not competing against an absence; it is competing against a good tool
+> that is already there. That is not a description problem, and no wording fixes it.
+
+A value-proposition finding, not a wording one. Scope: n=6 for v2, one description variant,
+one repo. It does not prove that no description could ever work; it proves the obvious one
+does not, and shifts the burden of proof onto anyone claiming the next rewrite will.
+
+### What remains defensible
+The trial only tested `find` against symbol lookup — the task Grep already serves. The two
+claims it did not touch are the ones Grep cannot serve: `outline` on a large file, and
+`brief` for orienting in an unfamiliar repository. Untested and plausible, and named as the
+subject of any next trial — not presented as validated. The `bench` figures stay: they remain
+correct arithmetic about an available saving.
+
+### Changed
+- `skills/code-map/SKILL.md` — the "Open question — untested" section is replaced by the
+  answer; the headline limitation now counts **30 advertised runs across two descriptions,
+  zero invocations**.
+- `README.md` — the "Does an agent actually use it? Measured: no." section gains the
+  follow-up table and conclusion, in place — not moved lower, not softened.
+- Versions to 0.7.1. No script changes; 90 tests across 4 suites unchanged.
+
 ## [0.7.0] — 2026-08-09
 
 A null result, and it is the headline because it is one: **in a controlled 24-task trial,

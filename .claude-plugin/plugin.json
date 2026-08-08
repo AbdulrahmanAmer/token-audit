@@ -1,6 +1,6 @@
 {
   "name": "token-audit",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Measure where a Claude Code session's tokens actually went. Reads the transcript Claude Code already writes and reports re-read cost, repeated test output, and cost per commit — so token optimisation targets measured waste instead of a plausible guess. Never prints transcript content.",
   "author": {
     "name": "AbdulrahmanAmer",

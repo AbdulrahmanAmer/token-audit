@@ -3,7 +3,7 @@ name: code-index
 description: Generates a deterministic, greppable fact table — one line per fact — answering what you must know about a source file without opening it: what it is, its CLI, its internal imports, who breaks if you change an export, who runs it as a subprocess, who checks it, what it exports, and a file:line pointer to a load-bearing invariant. Use when asked who calls or depends on a file, what the blast radius of a change is, what a file does without reading it, or to set up or refresh a code index. Config-driven, derived never authored, and verified in CI with --check so it cannot drift. Saving is modest and measured — 1-3.4k tokens per fix, n=1, with a confound.
 license: MIT
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
   author: token-audit contributors
 ---
 

@@ -315,9 +315,32 @@ identically — reported because pre-registration requires it, not because they 
 
 **On this evidence, the saving `bench` measures below is available and not taken.** The
 mechanism is not disproved — it was never invoked, so it was never tested. What was measured
-is adoption: with the current description, installed and advertised is not enough to make the
-skill fire, so its value is contingent on being invoked explicitly. Scope: one repo, 24
-tasks, n=1 per item.
+is adoption: installed and advertised is not enough to make the skill fire, so its value is
+contingent on being invoked explicitly. Scope: one repo, 24 tasks, n=1 per item.
+
+**Follow-up — is the description what fails? Tested: no.** v0.7.0 shipped that hypothesis
+labelled untested. Same clone, same frozen tasks, same model and effort; **only the skill's
+`description:` frontmatter changed**. v1 (651 chars) buried the trigger behind mechanism and
+ended with *"fall back to Grep on a miss"*; v2 (444 chars) leads with the trigger and says
+outright — *"Run this BEFORE reaching for Grep … Prefer it over Grep for locating a name."*
+
+| description | runs | advertised | **invocations** | answers correct |
+|---|---|---|---|---|
+| v1 | 24 | 24/24 | **0** | 12/12 on L |
+| v2 — "prefer over Grep" | 6 | 6/6 | **0** | 6/6 |
+| combined | **30** | 30/30 | **0** | — |
+
+> An installed, advertised, plainly-described skill still loses to `Grep` on the exact task it
+> was built for — because `Grep` already answers that task correctly, in one call, with no
+> setup. `code-map` is not competing against an absence; it is competing against a good tool
+> that is already there. That is not a description problem, and no wording fixes it.
+
+n=6 for v2, one description variant, one repo — this does not prove that no description could
+ever work; it proves the obvious one does not, and shifts the burden of proof onto anyone
+claiming the next rewrite will. What remains defensible is exactly what the trial did not
+test, because Grep cannot serve it: `outline` on a large file, and `brief` for orienting in
+an unfamiliar repo. Untested and plausible — the subject of any next trial, not claims
+validated by this one.
 
 ```bash
 node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo
@@ -358,8 +381,8 @@ The extra round trips (14 → 24 tool calls) each re-send the conversation, and 
 bills as cache reads at a tenth of the input rate — which is how billed tokens can rise 47%
 while dollars stay flat. **n=1**, one task, one repo — and Arm B was *told* to use the map, so
 this measures the ceiling when the skill fires, not adoption. Whether it fires on its own has
-since been measured — see *"Does an agent actually use it?"* above: in 24 of 24 uncoached
-runs, it did not.
+since been measured — see *"Does an agent actually use it?"* above: in 30 of 30 uncoached
+runs, across two description variants, it did not.
 
 This table has been corrected twice, and each correction made the tool look worse and the
 measurement better. v0.5.0 shipped **−11%** "total agent tokens" — a figure derived from

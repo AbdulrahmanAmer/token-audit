@@ -3,7 +3,7 @@ name: code-map
 description: Answers "where is this symbol" and "what is in this file" for about 50 tokens instead of opening the file, by keeping a verified per-repo symbol cache. Use before reading a file to find one function, class, route, table or heading in it; when asked where something is defined; when orienting in an unfamiliar repository; or when a session is re-reading the same files it read last time. Every answer is re-checked against the file on disk, so a stale cache produces a miss and never a wrong location. Also measures what re-reading actually costs across past sessions. Regex-based and deliberately incomplete — fall back to Grep on a miss.
 license: MIT
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
   author: token-audit contributors
 ---
 
@@ -23,13 +23,13 @@ metadata:
 Reading is where the tokens go. Rediscovering *where things are* costs almost nothing;
 re-reading *the things themselves* costs 30%.
 
-**Measured limitation, stated before anything else (v0.7.0):** in a controlled 24-task trial —
-byte-identical prompts, this skill installed as a real project skill and advertised in the
-skills listing of **all 24 runs**, map prebuilt — it was invoked **zero times**. The agent
-reached for Grep every time, and Grep scored 12/12 on the location block this skill exists to
-serve. One repo, n=1 per item; the mechanism was not disproved — it was never invoked. But
-until that changes, every saving on this page is **available per question, realised only when
-this skill is explicitly invoked**.
+**Measured limitation, stated before anything else (v0.7.1):** in a controlled trial —
+byte-identical prompts, this skill installed as a real project skill, map prebuilt — it was
+advertised in the skills listing of **30 runs across two different descriptions**, one of
+which said outright *"Run this BEFORE reaching for Grep"*, and invoked **zero times**. The
+agent reached for Grep every time, and Grep answered the location tasks correctly. One repo;
+the mechanism is not disproved — it was never invoked. But every saving on this page is
+**available per question, realised only when this skill is explicitly invoked**.
 
 ## Use it in this order
 
@@ -61,8 +61,8 @@ location question:
 These figures are arithmetic over files — the saving *available* when a location question is
 answered with a slice — not a saving measured as *realised* by an agent in a live session.
 Neither agent trial to date realised any of it: the coached one (n=1, README) finished at
-**+47% billed tokens and cost parity**, and the uncoached 24-task trial never invoked the
-skill at all.
+**+47% billed tokens and cost parity**, and the uncoached trial (30 runs, two descriptions)
+never invoked the skill at all.
 
 The map is **worse** for 5–26% of files — ones small enough that reading them costs less than
 slicing them. Below ~40 lines, just read the file.
@@ -113,16 +113,36 @@ tempted to cat `.claude/code-map/symbols.tsv` into context, do not** — query i
 - `find` matches names, not usages. "Who calls this" is `code-index`'s `IMPORTEDBY`, or Grep.
 - The cache lives in `.claude/code-map/` in the repo. Add it to `.gitignore`.
 
-## Open question — untested
+## The open question, answered: it is not the description
 
-The trial's frozen interpretation table calls the zero-invocation result a **product finding:
-the skill's description does not make it fire.** The working hypothesis is that the
-`description:` frontmatter — the only part of this file a model sees before deciding to invoke
-it — is what fails, not the mechanism underneath, which was never invoked and therefore never
-tested. **That hypothesis is itself untested.** It cannot be settled by rewriting the
-description and shipping it; settling it requires re-running the 24-task trial with a changed
-description and counting invocations again. Until then, treat this skill as one that is
-invoked deliberately, not one that fires on its own.
+v0.7.0 recorded the hypothesis that the `description:` frontmatter was what failed, and
+labelled it untested. It has been tested: same clone, same frozen tasks, same model and
+effort, **only the description changed**. v1 (651 chars) buried the trigger behind mechanism
+and ended with *"fall back to Grep on a miss"*; v2 (444 chars) leads with the trigger and
+says outright — *"Run this BEFORE reaching for Grep … Prefer it over Grep for locating a
+name."*
+
+| description | runs | advertised | **invocations** | answers correct |
+|---|---|---|---|---|
+| v1 | 24 | 24/24 | **0** | 12/12 on L |
+| v2 — "prefer over Grep" | 6 | 6/6 | **0** | 6/6 |
+| combined | **30** | 30/30 | **0** | — |
+
+The hypothesis is **refuted**:
+
+> An installed, advertised, plainly-described skill still loses to `Grep` on the exact task it
+> was built for — because `Grep` already answers that task correctly, in one call, with no
+> setup. `code-map` is not competing against an absence; it is competing against a good tool
+> that is already there. That is not a description problem, and no wording fixes it.
+
+Scope: n=6 for v2, one description variant, one repo. This does not prove that *no*
+description could ever work; it proves the obvious one does not, and shifts the burden of
+proof onto anyone claiming the next rewrite will.
+
+**What remains defensible — untested, plausible, and the subject of any next trial:** the two
+things Grep genuinely cannot serve. `outline` on a large file (structure without paying for
+the read) and `brief` for orienting in an unfamiliar repository. The trial only tested `find`
+against symbol lookup; neither of these was isolated, and nothing yet validates them.
 
 ## The measurement half
 
