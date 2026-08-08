@@ -26,6 +26,15 @@ jobs:
       - name: Installer is valid shell
         if: runner.os != 'Windows'
         run: bash -n install.sh
+      - name: Installer is executable in the index
+        if: runner.os != 'Windows'
+        # The README tells people to run `./install.sh`. Committed from Windows, the file
+        # arrives mode 100644 and that instruction fails for everyone who clones — while
+        # every other check stays green, because nothing else runs it that way. Checked
+        # against the git INDEX rather than the working tree so it is meaningful on any OS.
+        run: |
+          mode="$(git ls-files -s install.sh | cut -d' ' -f1)"
+          test "$mode" = "100755" || { echo "install.sh is mode $mode; needs 100755 (git update-index --chmod=+x install.sh)"; exit 1; }
       - name: Installer works on a clean target, and rewrites the plugin root
         if: runner.os != 'Windows'
         run: |
