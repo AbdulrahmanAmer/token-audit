@@ -2,6 +2,86 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.4.0] — 2026-08-08
+
+Adds `code-map`. **The premise it was commissioned on turned out to be wrong, and the
+measurement is why.**
+
+### The measurement came first, and it refuted the plan
+The brief was "stop wasting tokens rediscovering where things are — grep output is draining
+the budget." Measured across **589 real sessions, 1.27 GB of transcript, ~8.3M tokens shown to
+a model**:
+
+| | tokens | share of everything shown |
+|---|---|---|
+| file reads | 4,082,513 | **49%** |
+| — of which whole-file (72% of all reads) | 2,860,089 | 34% |
+| **re-read in a later session** | **1,532,261** | **18%** |
+| re-read within one session | 1,014,644 | 12% |
+| search (grep/glob) | 616,119 | 7% |
+| **repeated searches** | 36,715 | **0.4%** |
+
+Search rediscovery is a rounding error. Re-reading files is 30%. So `code-map` is not a search
+index and does not replace grep — Anthropic tested embedding retrieval for Claude Code against
+plain agentic search and kept agentic search. It attacks the read side.
+
+### Added
+- `code-map` skill and `/code-map`. `build`, `find`, `outline`, `brief`, `bench`.
+- `scripts/code-map.mjs` — a per-repo symbol cache. `find` prints the next command
+  (`→ Read file offset=N limit=M`), because the saving is the slice, not the lookup.
+  22 languages by regex; deliberately not a parser.
+- `scripts/code-map-learn.mjs` — `tax` (what re-reading costs, on your own transcripts) and
+  `hot` (files a project re-reads every session).
+- `bench` — deterministic, no model, arithmetic over real files. Across three real repos
+  (16,979 / 849 / 451 files) the median location question costs 2,504–3,710 tok as a
+  whole-file read, 563–606 as a slice (**−76% to −85%**), 135–182 as an outline (**−95%**).
+  It also reports that the map is **worse for 5–26% of files** — a benchmark that cannot
+  report a loss is marketing.
+
+### The invariant
+> **The index is a cache. The file is always the source of truth.**
+
+Size and mtime are checked before any location is returned; a changed file is re-scanned
+in-process and the answer comes from the fresh scan. **A stale cache produces a miss, never a
+wrong location** — hence no `--check` mode and no staleness to manage. Four tests mutate a file
+*after* indexing it, which is the only way to distinguish a verified answer from a lucky one.
+
+### A feature cut by its own measurement
+Learning *what was searched for*, with a privacy gate (record a term only if it already exists
+as a symbol in your code, so a pasted credential cannot survive). Designed, then cut: repeated
+searches cost 0.4%, and it would have added a transcript-reading surface and a privacy control
+to maintain to chase four tenths of one percent.
+
+### Performance, because a slow tool is an unused tool
+The first build of a 16,000-file repo took **314s**. The char-by-char comment stripper was the
+cost; replaced with per-line string-blanking plus `indexOf`, and minified/bundled files are now
+skipped by shape. **46s cold, ~6s warm** — incremental reuse keys on the same (mtime, size)
+pair the query path uses, so there is one staleness rule in the system, not two.
+
+### Tests
+22 new, **83 total across 4 suites**. Mutation-verified against the real implementation:
+trusting the cache (2 red), reporting deleted files (1 red), removing the stripper (3 red),
+dropping the reserved-word filter (1 red), unsorted output (1 red).
+
+**Two of these tests were dead when written** — again. The comment fixtures used
+`// export function ghost()`, which never matches `^\s*export` even with the stripper removed.
+Only the mutation run caught it; the fixtures now use block comments whose inner lines match
+raw. Fixing them immediately exposed a real defect: **declarations inside Python docstrings
+were being indexed as symbols**, since Python has no block comment. Triple-quote handling
+added.
+
+### Privacy
+`code-map.mjs` never opens a transcript, and a test asserts it cannot name the transcript
+directory at all — a file boundary standing in for a security boundary. `tax` prints no paths
+and no search text; a credential-shaped canary is planted in a search pattern and asserted
+absent. `hot` prints file paths, the same documented exception `token-audit` makes.
+
+### Known limits
+- Regex-based: it misses things. A miss is a miss, never a wrong answer.
+- Skips files over 1 MB and minified bundles; `find` matches definitions, not usages.
+- Image reads cost real vision tokens this cannot see. It measures text and says so.
+- `.claude/code-map/` is gitignored — derived, per-machine, never committed.
+
 ## [0.3.0] — 2026-08-08
 
 Adds `code-index`. **Stated honestly up front: measured saving in its home repo was 1–3.4k

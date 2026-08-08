@@ -47,6 +47,7 @@ Then ask *"where did this session's tokens go?"*, or run `/token-audit`.
 | `token-audit` | Reads the transcript Claude Code already writes and reports where a session's tokens went: re-read cost, repeated test output, shell output by kind, cost per commit. | `/token-audit` |
 | `quiet-tests` | Measures how much of a project's test output is per-test PASS announcements, then proposes a patch that withholds only those. Refuses when the projected saving is under 25%. | `/quiet-tests` |
 | `code-index` | Generates a deterministic, greppable fact table — one line per fact — for what you must know about a file without opening it. Config-driven, derived never authored, `--check` in CI. | `/code-index` |
+| `code-map` | Answers "where is X" and "what's in this file" for ~50 tokens instead of opening it. Every answer re-verified against disk, so a stale cache misses rather than lies. | `/code-map` |
 
 `scripts/check-manifests.mjs` fails CI if a skill ships without a row here, or a row here
 names a skill that does not ship — both are silent failures for whoever installs this.
@@ -233,6 +234,78 @@ advertised as a CLI option, and fixture source inside template literals counted 
 Every one is mutation-verified against the real generator. Two of those tests were **dead when
 first written** — built from prose citing a path, which never matches an import pattern even
 with the stripper removed — and only the mutation run exposed it.
+
+## Code Map
+
+The premise for this one was *"agents waste tokens grepping for things they already found."*
+So it got measured first, across **589 real sessions — 1.27 GB of transcript, ~8.3M tokens
+shown to a model.** The premise was wrong:
+
+| | tokens | share of everything shown |
+|---|---|---|
+| file reads | 4,082,513 | **49%** |
+| — of which whole-file (72% of all reads) | 2,860,089 | 34% |
+| **re-read in a later session** | **1,532,261** | **18%** |
+| re-read within one session | 1,014,644 | 12% |
+| search (grep/glob) | 616,119 | 7% |
+| **repeated searches** | 36,715 | **0.4%** |
+
+Rediscovering *where things are* costs 0.4%. Re-reading *the things themselves* costs 30%.
+Run `code-map-learn.mjs tax` to get these numbers for your own machine.
+
+So this is not a search index and it does not replace grep — Anthropic
+[tested embedding-based retrieval for Claude Code against plain agentic search and kept agentic
+search](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). It
+attacks the read side, by **replacing reading the wrong amount.**
+
+```bash
+node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo
+node scripts/code-map.mjs find analyze   # scripts/audit.mjs:122  export  analyze
+node scripts/code-map.mjs outline <file> # what's in it, ~40 lines
+node scripts/code-map.mjs brief          # orient in a new repo, ~200 tokens
+node scripts/code-map.mjs bench          # measure it on YOUR repo
+```
+
+`find` prints the next command — `→ Read scripts/audit.mjs offset=110 limit=60` — because the
+saving is not the lookup, it is the slice. Benchmarked over three real repositories
+(16,979 / 849 / 451 files), median cost of one location question:
+
+| | whole file | find + slice | outline |
+|---|---|---|---|
+| median tokens | 2,504–3,710 | 563–606 (**−76% to −85%**) | 135–182 (**−95%**) |
+
+**It is worse for 5–26% of files** — ones small enough that reading them beats slicing them.
+`bench` prints that number next to the headline, because a benchmark that cannot report a loss
+is marketing.
+
+### Why you can act on it without checking
+
+> **The index is a cache. The file is always the source of truth.**
+
+Before any location is returned, the file's size and mtime are compared with what was indexed;
+if they moved, that file is re-scanned in-process and the answer comes from the fresh scan. **A
+stale cache produces a miss, never a wrong location.** There is no `--check` mode and no
+staleness to manage. Four tests mutate a file *after* indexing it — the only way to tell a
+verified answer from a lucky one.
+
+### Nothing is injected into your context
+
+Anthropic's guidance is explicit that recall **degrades** as context grows: *"as the number of
+tokens in the context window increases, the model's ability to accurately recall information
+from that context decreases."* An always-on index would trade tokens for accuracy and lose
+twice. Nothing is loaded up front; you query, and get a few lines back. Don't `cat` the cache
+into a prompt.
+
+### Limits, stated
+
+Regex-based, not a parser — it misses things, and a miss is a miss rather than a wrong answer.
+Skips files over 1 MB and minified bundles. `find` matches definitions, not usages. Image reads
+cost real vision tokens this cannot see; it measures text and says so.
+
+A feature was **cut** by the same measurement: learning *what was searched for*, with a privacy
+gate to keep credentials out of it. Repeated searches turned out to cost 0.4%. It would have
+added a transcript-reading surface and a privacy control to maintain, to chase four tenths of
+one percent.
 
 ## Development
 

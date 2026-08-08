@@ -2,3 +2,6 @@ node_modules/
 *.log
 .DS_Store
 *.bak
+
+# code-map cache: derived, per-machine, never committed
+.claude/code-map/
