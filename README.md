@@ -56,14 +56,29 @@ names a skill that does not ship — both are silent failures for whoever instal
 
 ```bash
 git clone https://github.com/AbdulrahmanAmer/token-audit && cd token-audit
-./install.sh      # runs the tests first, then installs to ~/.claude/skills/token-audit/
+./install.sh      # runs the tests first, then installs all three skills
 ```
 
-The installer refuses if the tests fail. Nothing is fetched at install time — whatever is in
-the checkout is the entire supply chain.
+Installs `token-audit`, `quiet-tests` and `code-index` into `~/.claude/skills/`, with the
+scripts carried alongside. The installer refuses if the tests fail. Nothing is fetched at
+install time — whatever is in the checkout is the entire supply chain.
 </details>
 
-Requires Node 18+. No dependencies, no network, writes nothing.
+Requires **Node 18+. No dependencies, no network access anywhere in this repo.**
+
+### What writes, and what doesn't
+
+The three skills differ, so it is worth being exact rather than repeating a slogan that was
+true when there was only one of them:
+
+| | reads | writes |
+|---|---|---|
+| `token-audit` | your transcripts | **nothing, ever** |
+| `quiet-tests` | your repo; runs your test suite | **nothing** until you pass `--apply` — which patches your test files and adds `quiet.mjs`, after showing you the diff |
+| `code-index` | your repo | `CODE-INDEX.txt` (and nothing else) |
+
+`token-audit` is the one with the absolute guarantee, and it is the one that reads your
+transcripts. The two that write are the two that only ever read your own source.
 
 ## Use
 
@@ -117,8 +132,9 @@ did I read twelve times"* is the most actionable line in the report, and a path 
 sensitive than a payload. Pass `--no-paths` where filenames themselves are confidential —
 every number still works.
 
-There is no network access anywhere in this repo, and nothing is written outside the
-installer's target directory.
+There is no network access anywhere in this repo. `scripts/audit.mjs` — the only script that
+reads your transcripts — writes nothing at all, anywhere. See the table above for the other
+two, which read source and never touch a transcript.
 
 ## Quiet Tests
 

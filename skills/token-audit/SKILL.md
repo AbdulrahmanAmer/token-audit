@@ -33,7 +33,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --json              # same numbers,
 node ${CLAUDE_PLUGIN_ROOT}/scripts/audit.mjs --no-paths          # withhold file paths
 ```
 
-Node 18+. No dependencies, no network, writes nothing.
+Node 18+. No dependencies, no network, writes nothing — this script reads transcripts and prints; it never writes anywhere.
 
 **The current session's transcript lags behind live** — it is flushed as the session
 proceeds, so the last few turns may be missing. That matters when measuring work you just
