@@ -2,7 +2,14 @@ name: validate
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is in the matrix because both defects found before v0.1.0 was tagged were
+        # Windows-only and both failed with exit code 0 and a wrong answer. A ubuntu-only
+        # pipeline was green for all of it.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -10,11 +17,22 @@ jobs:
           node-version: '20'
       - name: Manifests are valid JSON
         run: node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json'));JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json'))"
-      - name: Plugin and marketplace versions/names agree
+      - name: Manifests, skills, README and referenced scripts agree
         run: node scripts/check-manifests.mjs
       - name: Syntax
-        run: node --check scripts/audit.mjs && node --check scripts/test/run-tests.mjs
-      - name: Tests (privacy invariant + correctness)
-        run: node scripts/test/run-tests.mjs
+        run: node --check scripts/audit.mjs && node --check scripts/quiet.mjs && node --check scripts/quiet-tests.mjs
+      - name: Tests (privacy invariant + correctness + quiet-tests)
+        run: node scripts/test/run-all.mjs
       - name: Installer is valid shell
+        if: runner.os != 'Windows'
         run: bash -n install.sh
+      - name: Installer works on a clean target, and rewrites the plugin root
+        if: runner.os != 'Windows'
+        run: |
+          CLAUDE_SKILLS_DIR="$RUNNER_TEMP/skilltest" ./install.sh
+          # A bare skill has no plugin root. If this token survives into the installed copy,
+          # every path in the skill body is broken and the skill fails at first use.
+          test "$(grep -c 'CLAUDE_PLUGIN_ROOT' "$RUNNER_TEMP/skilltest/token-audit/SKILL.md")" = "0"
+          test "$(grep -c 'CLAUDE_PLUGIN_ROOT' "$RUNNER_TEMP/skilltest/quiet-tests/SKILL.md")" = "0"
+      - name: No dependencies, and none can be added by accident
+        run: node -e "const p=require('./package.json');if(p.dependencies||p.devDependencies)throw new Error('a dependency was added — that changes what installing this costs a stranger')"

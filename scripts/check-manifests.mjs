@@ -7,7 +7,7 @@
 // marketplace entry pointing at a name the plugin no longer has installs nothing, with no
 // error anyone sees until a user reports that the install "did nothing".
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,25 +38,75 @@ if (plugin && market) {
   }
 }
 
-// The skill's declared version must match the plugin's, because that is the number a user
-// reads back when reporting a bug.
-const skillPath = join(ROOT, 'skills', 'token-audit', 'SKILL.md');
-if (!existsSync(skillPath)) {
-  errors.push('skills/token-audit/SKILL.md is missing — the plugin would install with no skill.');
-} else if (plugin) {
+// ── Skills ────────────────────────────────────────────────────────────────────────────
+//
+// Every skill on disk must declare the plugin's version and its own directory name, and must
+// be ADVERTISED in the README. Both directions are failures, and both are quiet:
+//
+//   shipped but not advertised — the user installs a capability nobody tells them about, so
+//     it fires unexpectedly and reads as the assistant doing something it was not asked to.
+//   advertised but missing — the README documents a skill that does not install. The user
+//     asks for it, nothing happens, and the plugin looks broken rather than incomplete.
+//
+// The README is the register because it is the thing a stranger actually reads before
+// installing. A table row there is the advertisement.
+const skillsDir = join(ROOT, 'skills');
+const onDisk = existsSync(skillsDir)
+  ? readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort()
+  : [];
+
+if (!onDisk.length) errors.push('skills/ is empty — the plugin would install with no skill.');
+
+for (const name of onDisk) {
+  const skillPath = join(skillsDir, name, 'SKILL.md');
+  if (!existsSync(skillPath)) { errors.push(`skills/${name}/ has no SKILL.md`); continue; }
   const md = readFileSync(skillPath, 'utf8');
   const m = md.match(/^\s*version:\s*"?([\d.]+)"?\s*$/m);
-  if (!m) errors.push('SKILL.md declares no metadata.version');
-  else if (m[1] !== plugin.version) {
-    errors.push(`SKILL.md version ${m[1]} != plugin.json version ${plugin.version}`);
+  if (!m) errors.push(`skills/${name}/SKILL.md declares no metadata.version`);
+  else if (plugin && m[1] !== plugin.version) {
+    errors.push(`skills/${name}/SKILL.md version ${m[1]} != plugin.json version ${plugin.version}`);
   }
-  if (!/^name:\s*token-audit\s*$/m.test(md)) errors.push('SKILL.md name must be "token-audit"');
+  // The frontmatter name is what the skill is addressed by; a mismatch with the directory
+  // makes it load under a name the docs never mention.
+  if (!new RegExp(`^name:\\s*${name}\\s*$`, 'm').test(md)) {
+    errors.push(`skills/${name}/SKILL.md name must be "${name}" to match its directory`);
+  }
+  // A description is what the model matches on. An empty one means the skill never fires.
+  const desc = md.match(/^description:\s*(.+)$/m);
+  if (!desc || desc[1].trim().length < 40) {
+    errors.push(`skills/${name}/SKILL.md needs a description long enough to be matched on`);
+  }
 }
 
-// Every script the skill and command tell a user to run must exist. A documented flag that
+const readme = existsSync(join(ROOT, 'README.md')) ? readFileSync(join(ROOT, 'README.md'), 'utf8') : '';
+for (const name of onDisk) {
+  if (!new RegExp(`\`${name}\``).test(readme)) {
+    errors.push(`skills/${name}/ ships but README.md never mentions \`${name}\` — a capability nobody is told about.`);
+  }
+}
+// The other direction: the README's skill table listing something that does not exist.
+for (const [, advertised] of readme.matchAll(/^\|\s*`([a-z][a-z0-9-]+)`\s*\|/gm)) {
+  if (!onDisk.includes(advertised)) {
+    errors.push(`README.md advertises skill \`${advertised}\` but skills/${advertised}/ does not exist.`);
+  }
+}
+
+// ── Referenced scripts ────────────────────────────────────────────────────────────────
+//
+// Every script a skill or command tells a user to run must exist. A documented flag that
 // does not exist is the same class of defect as a broken link, and cheaper to catch here.
-for (const rel of ['scripts/audit.mjs', 'scripts/test/run-tests.mjs']) {
-  if (!existsSync(join(ROOT, rel))) errors.push(`${rel} is referenced but missing`);
+// Derived from the skill and command bodies rather than listed, so a new script referenced
+// in a new skill is checked without anyone remembering to add it.
+const referenced = new Set(['scripts/audit.mjs', 'scripts/test/run-all.mjs']);
+const bodies = [
+  ...onDisk.map((n) => join(skillsDir, n, 'SKILL.md')),
+  ...(existsSync(join(ROOT, 'commands')) ? readdirSync(join(ROOT, 'commands')).map((f) => join(ROOT, 'commands', f)) : []),
+].filter(existsSync);
+for (const f of bodies) {
+  for (const [, rel] of readFileSync(f, 'utf8').matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([\w./-]+\.mjs)/g)) referenced.add(rel);
+}
+for (const rel of [...referenced].sort()) {
+  if (!existsSync(join(ROOT, rel))) errors.push(`${rel} is referenced by a skill or command but missing`);
 }
 
 if (errors.length) {

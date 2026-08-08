@@ -1,0 +1,12 @@
+{
+  "name": "token-audit",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Measure where a Claude Code session's tokens actually went.",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node scripts/test/run-all.mjs",
+    "check": "node scripts/check-manifests.mjs"
+  }
+}

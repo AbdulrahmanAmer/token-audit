@@ -40,6 +40,16 @@ Inside Claude Code:
 
 Then ask *"where did this session's tokens go?"*, or run `/token-audit`.
 
+## Skills
+
+| Skill | What it does | Command |
+|---|---|---|
+| `token-audit` | Reads the transcript Claude Code already writes and reports where a session's tokens went: re-read cost, repeated test output, shell output by kind, cost per commit. | `/token-audit` |
+| `quiet-tests` | Measures how much of a project's test output is per-test PASS announcements, then proposes a patch that withholds only those. Refuses when the projected saving is under 25%. | `/quiet-tests` |
+
+`scripts/check-manifests.mjs` fails CI if a skill ships without a row here, or a row here
+names a skill that does not ship — both are silent failures for whoever installs this.
+
 <details>
 <summary>Without the plugin system</summary>
 
@@ -109,34 +119,66 @@ every number still works.
 There is no network access anywhere in this repo, and nothing is written outside the
 installer's target directory.
 
+## Quiet Tests
+
+A suite that prints a line per passing test spends most of its output on the things that went
+right. In the repo this was built for, a full run was **1,081 lines; afterwards, 91.** That is
+the largest single measured saving in this project.
+
+```bash
+node scripts/quiet-tests.mjs --dir <repo>            # detect, measure, verdict
+node scripts/quiet-tests.mjs --dir <repo> --apply    # patch, then re-measure
+```
+
+It runs your suite to measure it, so it takes as long as your tests do.
+
+**Two invariants, and they are the whole design:**
+
+1. **Nothing about assertions, counts or exit codes changes.** `console.log` is replaced; the
+   runner is not touched. Only single-line, single-argument *pass announcements* are withheld.
+   A red run still says so, in full, in both modes. `VERBOSE=1` restores the previous output
+   byte for byte — verified against an unpatched run, not asserted.
+2. **The summary always prints.** In the original repo, four CI gates parsed that line.
+   Suppressing it would have left a green pipeline that had stopped checking anything. It is
+   *explicitly exempted* in the code, not merely unlikely to match the filter.
+
+**Two refusals**, because a tool that always finds work is not measuring:
+
+- **No summary line found → it stops.** Withholding output from a runner whose totals you
+  cannot identify is indistinguishable from hiding a failure.
+- **Projected saving under 25% → it says there is nothing worth doing.** Pointed at this
+  repository, it declines: *"3 lines, 3 distinct, 0% saved."*
+
+The bar is on **projected saving**, not on the byte-identical-repeat share. Pass announcements
+are nearly all distinct — each carries a different test name — so a repeat-share gate would
+decline the exact case with the largest payoff. Both numbers are printed so the claim can be
+checked instead of believed.
+
+The filter is twelve lines, and every plausible *simpler* version of it is wrong in a way that
+deletes something you needed. Four cases must survive it: a marker inside a captured table
+(`| ✓ | migrate | 42ms |`), a multi-argument call (`console.log('✓', name, ms)`), a failure
+line, and the summary. Three mutants are asserted to break it — a loose
+`String(args).includes(marker)`, a filter that also eats the summary, and an inverted verbose
+gate — each run against the real implementation, not a copy.
+
 ## What's here, and what isn't
 
-This release is **measurement only**, on purpose: it is the piece that is fully portable
-today, and the piece that makes every later claim falsifiable — including the ones this
-project might want to make about itself.
+- **`code-index`** — planned. A generated, cache-stable fact table per source file: what it
+  is, its CLI, its imports, who breaks if you change it, who checks it, and a `file:line`
+  pointer to a load-bearing invariant. Config-driven, because ~10% of such a generator binds
+  to a repo's house conventions and that 10% is where the value is. Measured saving in its
+  home repo was 1–3.4k tokens per fix — real, not transformative, and it will ship described
+  that way.
 
-Planned, in order:
-
-- **`quiet-tests`** — detect a project's test-output convention and propose the quiet-mode
-  patch. Highest measured payoff of anything here (1,081 lines → 91), but it has to read
-  each project's own conventions, so it advises and patches rather than dropping in.
-- **`code-index`** — a generated, cache-stable fact table per source file: what it is, its
-  CLI, its imports, who breaks if you change it, who checks it, and a `file:line` pointer to
-  a load-bearing invariant. Config-driven, because ~10% of such a generator binds to a
-  repo's house conventions and that 10% is where the value is. Measured saving in its home
-  repo was 1–3.4k tokens per fix — real, not transformative, and it will ship described that
-  way.
-
-Both are held back until they can be shipped with the same standard of evidence as the
-measurement: a number, a test that fails when the number is wrong, and a mutant proving the
-test is alive.
+It is held back until it can be shipped with the same standard of evidence as the rest: a
+number, a test that fails when the number is wrong, and a mutant proving the test is alive.
 
 ## Development
 
 ```bash
-node scripts/test/run-tests.mjs        # privacy invariant + correctness
-VERBOSE=1 node scripts/test/run-tests.mjs
-node scripts/check-manifests.mjs       # the two manifests and the skill must agree
+npm test                               # every suite, one exit code
+VERBOSE=1 npm test                     # per-test lines restored
+node scripts/check-manifests.mjs       # manifests, skills, README and scripts must agree
 ```
 
 CI runs all of it on every push, plus `bash -n install.sh`.

@@ -2,6 +2,69 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.2.0] — 2026-08-08
+
+Adds `quiet-tests`, the highest-payoff change measured by v0.1.0: in the repo it was first
+done in, a full test run went from **1,081 lines to 91**.
+
+### Added
+- `quiet-tests` skill and `/quiet-tests` command. Detects a project's test-output convention
+  (success marker with a **confidence**, summary line, and any CI gates parsing either),
+  measures the suite, and proposes a unified diff. Applying is a separate, explicit act.
+- `scripts/quiet.mjs` — the artifact copied into a target repo. Patches `console.log` to
+  withhold single-line, single-argument pass announcements; prints a one-line tally on exit;
+  `VERBOSE=1` / `-v` / `--verbose` restores the previous output byte for byte.
+- `scripts/quiet-tests.mjs` — detect, measure, `--propose`, `--apply`, `--json`.
+- `scripts/test/run-all.mjs` — every suite, one exit code. Suites run as separate processes
+  so one suite's cleanup cannot decide another's result; discovered from the directory rather
+  than listed, because a suite missing from a hand-written array looks exactly like one that
+  passes.
+- `package.json` — `npm test`. No dependencies, and CI now fails if any are added.
+
+### The two invariants, and why they are invariants
+- **Nothing about assertions, counts or exit codes changes.** Verified end to end on a real
+  repo: 46 lines → 7, exit code 1 → 1, failure line intact.
+- **The summary always prints.** In the original repo four CI gates parsed it; suppressing it
+  would have left a green pipeline that had stopped checking anything. It is *explicitly*
+  exempted (`SUMMARY_RE`, tested against summaries that themselves start with the marker) —
+  not merely unlikely to match the filter, which is an accident a later marker change undoes.
+- `VERBOSE=1` was diffed against an unpatched run of the same suite: byte for byte identical,
+  44 lines.
+
+### The two refusals
+- **No summary line found → stop.** Withholding output from a runner whose totals cannot be
+  identified is indistinguishable from hiding a failure.
+- **Projected saving under 25% → "nothing worth doing here."** Pointed at this repository it
+  declines: *3 lines, 3 distinct, 0% saved.* A tool that always finds work is not measuring.
+- The bar is on **projected saving**, not byte-identical-repeat share. Pass announcements are
+  nearly all distinct — each carries a different test name — so a repeat-share gate would
+  decline the exact case with the largest measured payoff. Both numbers are printed.
+
+### Tests
+- 21 new tests, 37 total. Four cases must survive the filter: a marker inside a captured
+  table, a multi-argument call, a failure line, and the summary.
+- Mutation-verified against the **real** implementation, not a copy: a loose
+  `String(args).includes(marker)` (6 red), removing the summary exemption (1 red), and an
+  inverted verbose gate (4 red).
+
+### Changed
+- `check-manifests.mjs` now enforces every skill: version matches `plugin.json`, frontmatter
+  name matches its directory, description long enough to be matched on, and the README
+  advertises exactly the skills that ship — **both** directions fail, since a skill shipped
+  without a README row is a capability nobody is told about, and a row without a skill is a
+  plugin that looks broken. Scripts referenced as `${CLAUDE_PLUGIN_ROOT}/…` are extracted from
+  the skill and command bodies and checked to exist, so a new skill's scripts are covered
+  without anyone remembering to add them.
+- `install.sh` installs every directory under `skills/`, discovered rather than listed.
+- CI runs on **ubuntu, windows and macos**. Both defects found before v0.1.0 was tagged were
+  Windows-only, and a ubuntu-only pipeline was green for all of it. CI also now runs the
+  installer on a clean target and asserts no `CLAUDE_PLUGIN_ROOT` survives in any installed
+  skill.
+
+### Fixed
+- The proposed diff used the platform path separator, so on Windows it emitted
+  `--- a/test\suite.mjs` — which `patch` and `git apply` both reject. Forward slashes always.
+
 ## [0.1.0] — 2026-08-08
 
 First release. **Measurement only**, deliberately: it is the fully portable piece, and the
@@ -52,11 +115,3 @@ failed in the shape that is hardest to notice — a zero exit code with a wrong 
 - The live session's transcript lags behind — measure across `--per-commit` boundaries
   rather than against the last line.
 
-## Unreleased — planned
-
-- `quiet-tests`: detect a project's test-output convention, propose the quiet-mode patch.
-  Highest measured payoff available (1,081 lines → 91 in the home repo), but convention-bound,
-  so it advises and patches rather than dropping in.
-- `code-index`: config-driven per-file fact table — what it is, its CLI, its imports, who
-  breaks if you change it, who checks it, and a `file:line` invariant pointer. Measured
-  saving 1–3.4k tokens per fix; it will ship described that way rather than as a headline.
