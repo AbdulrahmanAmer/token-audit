@@ -25,13 +25,26 @@ one that makes every later claim in this project falsifiable.
 - Invariant: no tool-result content, and no command or search text, is ever printed. Bodies
   are measured by length and discarded; commands are reduced to one word from a closed
   vocabulary and discarded.
-- 15 tests. A canary is planted in every position a transcript can hold one and asserted
+- 16 tests. A canary is planted in every position a transcript can hold one and asserted
   absent from every output mode. The classifier is separately asserted to be incapable of
   emitting any word outside its fixed vocabulary.
 - Mutation-verified: a "sample line" feature, a classifier that echoes its input, and an
   ignored `--no-paths` each turn the suite red.
 - File paths are the documented exception, opt-out via `--no-paths`, pinned by a test in
   both directions so the trade cannot be quietly changed.
+
+### Windows
+Both of these were found by running the shipped suite on Windows before tagging, and both
+failed in the shape that is hardest to notice — a zero exit code with a wrong answer.
+- The CLI main-guard compared `import.meta.url` against `` `file://${process.argv[1]}` ``,
+  which never matches on Windows (`file:///D:/…` vs `file://D:\…`). The CLI loaded as a
+  library and printed **nothing**, exiting 0. Now uses `pathToFileURL`. The existing privacy
+  and path tests caught it: 7 red before, 15 green after.
+- `--project` did not resolve any path containing a dot or a space. Claude Code hyphenates
+  **every** character outside `[A-Za-z0-9-]` when encoding a project directory name
+  (`~/.claude` → `C--Users-DELL--claude`), not just `/ \ :`. Fixed, and pinned by a test
+  whose cases are copied from a real `~/.claude/projects` listing rather than derived from
+  the implementation.
 
 ### Known limits, stated rather than discovered later
 - Tokens are **estimated** at 3.6 bytes each. There is no offline tokenizer; ratios are the

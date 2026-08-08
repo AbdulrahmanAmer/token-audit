@@ -79,8 +79,16 @@ export function classify(command) {
 
 // ── Transcript discovery ──────────────────────────────────────────────────────────────
 
-/** Claude Code encodes a project path into a directory name by replacing separators. */
-const encodeProject = (p) => p.replace(/[/\\:]/g, '-');
+/**
+ * Claude Code encodes a project path into a directory name.
+ *
+ * Not just the separators: EVERY character outside [A-Za-z0-9-] becomes a hyphen, which is
+ * why `~/.claude` lands as `C--Users-DELL--claude` (the dot too) and a directory with a
+ * space in it lands fully hyphenated. Handling only `/ \ :` makes --project miss on any path
+ * containing a dot or a space, and it fails as "no transcript found" on a machine where the
+ * transcript is right there — a wrong answer wearing the clothes of a legitimate one.
+ */
+export const encodeProject = (p) => String(p).replace(/[^A-Za-z0-9]/g, '-');
 
 export function listTranscripts(root = PROJECTS) {
   if (!existsSync(root)) return [];
