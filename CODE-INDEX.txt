@@ -7,7 +7,7 @@ scripts/audit.mjs	DEFINES	KINDS classify
 scripts/audit.mjs	IMPORTEDBY	scripts/test/run-tests.mjs
 scripts/audit.mjs	SPAWNEDBY	scripts/test/run-tests.mjs
 scripts/audit.mjs	GUARD	scripts/test/run-tests.mjs
-scripts/audit.mjs	WHY	scripts/audit.mjs:30 NO TOOL-RESULT CONTENT
+scripts/audit.mjs	WHY	scripts/audit.mjs:31 NO TOOL-RESULT CONTENT
 scripts/check-manifests.mjs	IS	the two manifests and the skill must agree about what this is.
 scripts/code-index.mjs	IS	one line per fact: what must I know about this file without opening it?
 scripts/code-index.mjs	CLI	--check --config --root --stdout
@@ -27,7 +27,7 @@ scripts/code-map.mjs	DEFINES	LANGS
 scripts/code-map.mjs	IMPORTEDBY	scripts/test/code-map.test.mjs
 scripts/code-map.mjs	GUARD	scripts/test/code-map.test.mjs
 scripts/code-map.mjs	WHY	scripts/code-map.mjs:33 THE INDEX IS A CACHE
-scripts/code-map.mjs	WHY	scripts/code-map.mjs:455 STATED SO IT CAN BE DISAGREED WITH
+scripts/code-map.mjs	WHY	scripts/code-map.mjs:466 STATED SO IT CAN BE DISAGREED WITH
 scripts/quiet-tests.mjs	IS	find out whether a repo's test output is worth quieting, and by how much.
 scripts/quiet-tests.mjs	CLI	--apply --cmd --dir --json
 scripts/quiet-tests.mjs	DEFINES	MARKERS SUMMARY_PATTERNS WORTH_DOING applyPatch detectCommand detectGates detectMarker detectSummary findEmitters measure proposePatch renderDiff report runSuite

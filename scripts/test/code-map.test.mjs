@@ -216,6 +216,26 @@ it('find ranks an exact match above a substring match', () => {
   assert(find(dir, 'run').hits[0].name === 'run', 'an exact match was not ranked first');
 });
 
+it('function-local bindings are found, but never outrank a real declaration', () => {
+  // Added because an A/B run measured what missing them costs: two of five questions were
+  // about function-local consts, `find` missed both, and each miss cost a fallback round
+  // trip — which is what ate most of the token saving. But a local must never win over an
+  // export of the same name, or the map starts answering "where is X" with a temporary.
+  const dir = fixture({
+    'a.mjs': ['export function compute() {', '  const threshold = 1;', '  return threshold;', '}'].join('\n'),
+    'b.mjs': ['export const threshold = 5;'].join('\n'),
+  });
+  built(dir);
+  const hits = find(dir, 'threshold').hits;
+  assert(hits.length >= 2, `expected both the export and the local, got ${hits.length}`);
+  assert(hits[0].path === 'b.mjs', `the export should rank first, got ${hits[0].path} (${hits[0].kind})`);
+  assert(hits.some((h) => h.kind === 'local' && h.path === 'a.mjs'), 'the local binding was not indexed at all');
+  // Short names are noise in a lookup table, not recall.
+  const noisy = fixture({ 'c.mjs': ['export function f() {', '  const i = 0;', '  const re = /x/;', '}'].join('\n') });
+  const names = built(noisy).rows.map((r) => r.name);
+  assert(!names.includes('i') && !names.includes('re'), `single/short locals were indexed: ${names}`);
+});
+
 it('find prints a slice command with a real offset, not just a line', () => {
   // The entire saving is the difference between Read(file) and Read(file, offset, limit).
   // An agent handed a line number but not the idea still opens the whole file.

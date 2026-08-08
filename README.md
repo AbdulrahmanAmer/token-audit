@@ -57,10 +57,10 @@ names a skill that does not ship — both are silent failures for whoever instal
 
 ```bash
 git clone https://github.com/AbdulrahmanAmer/token-audit && cd token-audit
-./install.sh      # runs the tests first, then installs all three skills
+./install.sh      # runs the tests first, then installs all four skills
 ```
 
-Installs `token-audit`, `quiet-tests` and `code-index` into `~/.claude/skills/`, with the
+Installs `token-audit`, `quiet-tests`, `code-index` and `code-map` into `~/.claude/skills/`, with the
 scripts carried alongside. The installer refuses if the tests fail. Nothing is fetched at
 install time — whatever is in the checkout is the entire supply chain.
 </details>
@@ -69,17 +69,18 @@ Requires **Node 18+. No dependencies, no network access anywhere in this repo.**
 
 ### What writes, and what doesn't
 
-The three skills differ, so it is worth being exact rather than repeating a slogan that was
+The four skills differ, so it is worth being exact rather than repeating a slogan that was
 true when there was only one of them:
 
 | | reads | writes |
 |---|---|---|
-| `token-audit` | your transcripts | **nothing, ever** |
+| `token-audit` | your transcripts (including subagent ones) | **nothing, ever** |
 | `quiet-tests` | your repo; runs your test suite | **nothing** until you pass `--apply` — which patches your test files and adds `quiet.mjs`, after showing you the diff |
 | `code-index` | your repo | `CODE-INDEX.txt` (and nothing else) |
+| `code-map` | your repo (`code-map.mjs` **never opens a transcript**, and a test asserts it cannot); `code-map-learn.mjs` reads transcripts | `.claude/code-map/` (gitignored cache) |
 
 `token-audit` is the one with the absolute guarantee, and it is the one that reads your
-transcripts. The two that write are the two that only ever read your own source.
+transcripts. The transcript-reading surface of the whole plugin is two files, by design.
 
 ## Use
 
@@ -91,7 +92,16 @@ node scripts/audit.mjs --list              # what transcripts exist
 node scripts/audit.mjs --per-commit        # cost per commit, for before/after work
 node scripts/audit.mjs --json              # same numbers, machine-readable
 node scripts/audit.mjs --no-paths          # withhold file paths
+node scripts/audit.mjs --no-subagents      # exclude delegated work (included by default)
 ```
+
+**Subagent work is included by default, and it is not optional detail.** Claude Code writes a
+subagent's turns to `<project>/<session>/subagents/*.jsonl`, never into the parent transcript,
+so a scan of the parent alone reports a delegating session as nearly free. On the session that
+ran this project's A/B, two agents consumed ~25,000 tokens of tool output while the parent
+attributed **3,432** to the Agent tool — just the summaries. Counting them moved that session
+from 43,139 to 68,133 tokens: **it had been under-reporting by 58%.** If your workflow leans on
+agents, every number you got before v0.5.0 was too low.
 
 | Section | The question it answers |
 |---|---|
@@ -277,6 +287,29 @@ saving is not the lookup, it is the slice. Benchmarked over three real repositor
 **It is worse for 5–26% of files** — ones small enough that reading them beats slicing them.
 `bench` prints that number next to the headline, because a benchmark that cannot report a loss
 is marketing.
+
+### Does it actually change what a session costs?
+
+Two subagents, same model, same repo, the same five orientation questions requiring locations
+across four files. Arm A used normal tools; Arm B was told the map existed and to use the
+`offset`/`limit` that `find` prints. **Both got all five answers right.**
+
+| | A (control) | B (code-map) | |
+|---|---|---|---|
+| all tool output | 15,601 tok | 9,393 tok | **−40%** |
+| read tokens | 10,462 | 5,863 | **−44%** |
+| whole-file reads | 2 | **0** | eliminated |
+| tool calls | 14 | 24 | **+71%** |
+| **total agent tokens** | **64,538** | **57,584** | **−11%** |
+
+**Take −11% as the headline, not −40%.** Tool output fell 40%; the extra round trips ate most
+of it back, because each one re-sends the conversation. **n=1**, one task, one repo — and Arm B
+was *told* to use the map, so this is the ceiling when the skill fires, not evidence that it
+fires on its own.
+
+The run also paid for itself twice: it exposed that `find` missed both function-local consts in
+the question set, and each miss cost a fallback round trip. Locals are now indexed (ranked
+below real declarations), which is where the +71% came from and the first thing to improve.
 
 ### Why you can act on it without checking
 

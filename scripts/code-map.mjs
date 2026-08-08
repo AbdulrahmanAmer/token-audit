@@ -83,6 +83,13 @@ const PATTERNS = [
   { ext: /\.(m?[jt]sx?|cts|mts)$/, kind: 'const', re: /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
   { ext: /\.(m?[jt]sx?|cts|mts)$/, kind: 'type', re: /^\s*(?:export\s+)?(?:interface|type|enum)\s+([A-Za-z_$][\w$]*)/ },
   { ext: /\.(m?[jt]sx?|cts|mts)$/, kind: 'method', re: /^\s{2,}(?:public|private|protected|static|async|\*)?\s*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/ },
+  // Function-local bindings. Added because the A/B run measured the cost of NOT having them:
+  // two of five questions were about locals (`manifestLimit`, `eligibleCount`), `find` missed
+  // both, and each miss cost a fallback round trip — which is what ate most of the token
+  // saving. Ranked below real declarations by `score()`, so they never outrank an export.
+  // Length >= 4 keeps `i`, `j`, `e`, `re`, `ok` out of a lookup table.
+  { ext: /\.(m?[jt]sx?|cts|mts)$/, kind: 'local', re: /^\s+(?:const|let)\s+([A-Za-z_$][\w$]{3,})\s*=/ },
+
   // Python
   { ext: /\.py$/, kind: 'function', re: /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/ },
   { ext: /\.py$/, kind: 'class', re: /^\s*class\s+([A-Za-z_]\w*)/ },
@@ -337,6 +344,9 @@ export function verifyFile(root, path, meta) {
   try { return extractSymbols(readFileSync(abs, 'utf8'), extname(abs)); } catch { return null; }
 }
 
+/** A local binding never outranks a real declaration, however good the name match is. */
+const LOCAL_PENALTY = 10;
+
 const score = (needle, name) => {
   if (name === needle) return 0;
   if (name.toLowerCase() === needle.toLowerCase()) return 1;
@@ -349,7 +359,7 @@ const score = (needle, name) => {
 export function find(root, needle, { index, limit = 20 } = {}) {
   const idx = index || loadIndex(root);
   if (!idx) return { hits: [], built: false };
-  const candidates = idx.rows.map((r) => ({ ...r, s: score(needle, r.name) }))
+  const candidates = idx.rows.map((r) => ({ ...r, s: score(needle, r.name) + (r.kind === 'local' ? LOCAL_PENALTY : 0) }))
     .filter((r) => r.s < 99)
     .sort((a, b) => a.s - b.s || a.path.localeCompare(b.path) || a.line - b.line);
 
@@ -363,7 +373,8 @@ export function find(root, needle, { index, limit = 20 } = {}) {
     if (fresh === 'unchanged') { hits.push(c); continue; }
     // The file moved. Take the answer from the FRESH scan, not from the cache.
     const match = fresh.filter((s) => score(needle, s.name) < 99)
-      .sort((a, b) => score(needle, a.name) - score(needle, b.name))[0];
+      .sort((a, b) => (score(needle, a.name) + (a.kind === 'local' ? LOCAL_PENALTY : 0))
+        - (score(needle, b.name) + (b.kind === 'local' ? LOCAL_PENALTY : 0)))[0];
     if (match) hits.push({ name: match.name, kind: match.kind, path: c.path, line: match.line, restaled: true });
   }
   // De-duplicate: a re-scanned file can be reached through several stale rows.

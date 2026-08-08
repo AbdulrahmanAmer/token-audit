@@ -2,6 +2,59 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.5.0] — 2026-08-08
+
+The first **end-to-end** evidence in this project, and a defect the experiment found in the
+tool that has been measuring everything else.
+
+### The A/B: does `code-map` actually change what a session costs?
+Two subagents, same model, same repository, the same five orientation questions requiring
+locations across four files. Arm A used normal tools; Arm B was told the map existed and to
+use the `offset`/`limit` that `find` prints. **Both got all five answers right**, verified
+against source.
+
+| | A (control) | B (code-map) | |
+|---|---|---|---|
+| all tool output | 15,601 tok | 9,393 tok | **−40%** |
+| read tokens | 10,462 | 5,863 | **−44%** |
+| whole-file reads | 2 | **0** | eliminated |
+| tool calls | 14 | 24 | **+71%** |
+| total agent tokens | 64,538 | 57,584 | **−11%** |
+
+**The honest headline is −11%, not −40%.** Tool output fell 40%; the extra round trips ate
+most of it back. n=1, one task, one repo, and Arm B was *told* to use the map — so this
+measures the ceiling when the skill fires, not whether it fires on its own.
+
+### Fixed: token-audit could not see subagent work at all
+Claude Code writes a subagent's turns to `<project>/<session>/subagents/agent-*.jsonl`, not
+into the parent transcript. `listTranscripts` globbed only `<project>/*.jsonl` and missed all
+of it. Measured on the session that ran the A/B: the two agents consumed ~25,000 tokens of
+tool output while the parent transcript attributed **3,432** to the Agent tool — just the
+summaries they handed back. Re-measured with the fix, this session went **43,139 → 68,133
+tokens: it had been under-reporting by 58%.**
+
+Under-reporting the expensive case is the worst failure available to a measurement tool: it
+does not lose precision, it points you at the part that was already cheap. Anyone whose
+workflow leans on agents has been getting a materially wrong picture.
+
+- `listTranscripts` now finds subagent transcripts and tags them `isSubagent`/`subagentOf`.
+- `analyze` accepts several transcripts and measures them as one cost.
+- Subagents are **included by default**; `--no-subagents` opts out. Per-commit segmentation
+  still follows the main session's commits, and the report says when subagents are folded in.
+- Mutation-verified: reverting to a shallow scan, and ignoring all but the first path, each
+  turn the new test red.
+
+### Changed: `code-map` indexes function-local bindings
+The A/B exposed the recall gap directly — two of the five questions were about function-local
+consts, `find` missed both, and each miss cost a fallback round trip, which is exactly what
+ate the token saving. `const`/`let` bindings of 4+ characters are now indexed as kind `local`
+and ranked **below** every real declaration, so a local can never outrank an export of the
+same name. Index grew 183 → 401 symbols on this repo; nothing is injected into context, so
+the cost is disk, not tokens. Both rules mutation-verified.
+
+### Tests
+85 across 4 suites (was 83).
+
 ## [0.4.0] — 2026-08-08
 
 Adds `code-map`. **The premise it was commissioned on turned out to be wrong, and the

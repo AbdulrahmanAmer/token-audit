@@ -7,6 +7,7 @@
 //   node scripts/audit.mjs --list             # what transcripts exist
 //   node scripts/audit.mjs --per-commit       # cost of each commit, for A/B comparisons
 //   node scripts/audit.mjs --json             # machine-readable, same numbers
+//   node scripts/audit.mjs --no-subagents     # exclude delegated work (included by default)
 //
 // ── What this is for ──────────────────────────────────────────────────────────────────
 //
@@ -90,6 +91,21 @@ export function classify(command) {
  */
 export const encodeProject = (p) => String(p).replace(/[^A-Za-z0-9]/g, '-');
 
+/**
+ * Every transcript, INCLUDING the ones subagents write.
+ *
+ * A subagent's turns do not go into the parent transcript. They go to
+ *
+ *     <project>/<session-id>/subagents/agent-<id>.jsonl
+ *
+ * and a scan that only globs `<project>/*.jsonl` misses them entirely — which reports a
+ * delegating session as nearly free. Measured on a real session here: two subagents consumed
+ * ~25,000 tokens of tool output while the parent transcript attributed 3,432 tokens to the
+ * Agent tool, because all the parent ever sees is the summary each agent hands back.
+ *
+ * Under-reporting the expensive case is the worst failure available to a measurement tool.
+ * It does not merely lose precision — it points the user at the part that was already cheap.
+ */
 export function listTranscripts(root = PROJECTS) {
   if (!existsSync(root)) return [];
   const out = [];
@@ -97,13 +113,39 @@ export function listTranscripts(root = PROJECTS) {
     const full = join(root, dir);
     let st; try { st = statSync(full); } catch { continue; }
     if (!st.isDirectory()) continue;
-    for (const f of readdirSync(full)) {
-      if (!f.endsWith('.jsonl')) continue;
-      const p = join(full, f);
-      try { out.push({ path: p, project: dir, mtime: statSync(p).mtimeMs, size: statSync(p).size }); } catch { /* vanished */ }
+    let entries; try { entries = readdirSync(full, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const p = join(full, e.name);
+      if (e.isFile() && e.name.endsWith('.jsonl')) {
+        try { out.push({ path: p, project: dir, mtime: statSync(p).mtimeMs, size: statSync(p).size }); } catch { /* vanished */ }
+        continue;
+      }
+      if (!e.isDirectory()) continue;
+      const subDir = join(p, 'subagents');
+      if (!existsSync(subDir)) continue;
+      for (const f of readdirSync(subDir)) {
+        if (!f.endsWith('.jsonl')) continue;
+        const sp = join(subDir, f);
+        try {
+          out.push({
+            path: sp, project: dir, isSubagent: true, subagentOf: e.name,
+            mtime: statSync(sp).mtimeMs, size: statSync(sp).size,
+          });
+        } catch { /* vanished */ }
+      }
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+/** The subagent transcripts belonging to one session file, if any. */
+export function subagentsFor(sessionPath) {
+  const dir = sessionPath.replace(/\.jsonl$/, '');
+  const subDir = join(dir, 'subagents');
+  if (!existsSync(subDir)) return [];
+  try {
+    return readdirSync(subDir).filter((f) => f.endsWith('.jsonl')).sort().map((f) => join(subDir, f));
+  } catch { return []; }
 }
 
 // ── The pass ──────────────────────────────────────────────────────────────────────────
@@ -119,7 +161,12 @@ export function listTranscripts(root = PROJECTS) {
  * of scope at the end of the iteration. No body, command or pattern is stored on the returned
  * object; see the privacy note at the top.
  */
-export async function analyze(path) {
+export async function analyze(pathOrPaths) {
+  // Accepts several transcripts so a session and the subagents it spawned can be measured as
+  // one cost, which is what the user actually paid. Streamed in order; the per-commit
+  // segmentation below follows the MAIN session's commit boundaries, so subagent calls land
+  // in whichever segment was open when they ran.
+  const paths = Array.isArray(pathOrPaths) ? pathOrPaths : [pathOrPaths];
   const pending = new Map();               // tool_use id -> {name, command, file}
   const byTool = new Map();                // tool name -> {calls, bytes}
   const byKind = new Map();                // command kind -> {calls, bytes}
@@ -135,6 +182,7 @@ export async function analyze(path) {
     e.calls++; e.bytes += bytes; map.set(key, e);
   };
 
+  for (const path of paths) {
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line.trim()) continue;
@@ -190,6 +238,7 @@ export async function analyze(path) {
       }
     }
   }
+  }
   commits.push(seg);   // work since the last commit
 
   const readRows = [...reads.entries()].map(([file, r]) => ({ file, ...r }))
@@ -197,7 +246,8 @@ export async function analyze(path) {
   const repeats = readRows.filter((r) => r.n > 1);
 
   return {
-    path,
+    path: paths[0],
+    sources: paths.length,
     assistantTurns,
     totalCalls,
     totalBytes,
@@ -231,8 +281,9 @@ const n = (x) => x.toLocaleString('en-US');
 
 function render(a, { showPaths, perCommit }) {
   const L = [];
-  L.push(`transcript: ${basename(a.path)}`);
+  L.push(`transcript: ${basename(a.path)}${a.subagents ? ` + ${a.subagents} subagent transcript${a.subagents > 1 ? 's' : ''}` : ''}`);
   L.push(`${n(a.assistantTurns)} assistant turns, ${n(a.totalCalls)} tool results, ~${n(tok(a.totalBytes))} tokens taken in`);
+  if (a.subagents) L.push('  (subagent work is included — it is invisible in the parent transcript)');
   L.push('');
 
   L.push('WHERE THE TOKENS WENT');
@@ -327,7 +378,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   if (!existsSync(target)) { console.error(`no such transcript: ${target}`); process.exit(1); }
 
-  const result = await analyze(target);
+  // Subagent work is part of what the session cost, so it is included by default. Anything
+  // else reports a delegating session as nearly free.
+  const subs = flag('--no-subagents') ? [] : subagentsFor(target);
+  const result = await analyze([target, ...subs]);
+  result.subagents = subs.length;
   if (flag('--json')) {
     // Paths are stripped from JSON unless asked for, same rule as the text report.
     const out = flag('--no-paths') ? { ...result, path: basename(result.path), reads: [] } : result;

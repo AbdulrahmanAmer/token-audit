@@ -3,7 +3,7 @@ name: quiet-tests
 description: Measures how much of a project's test output is per-test PASS announcements, and proposes a patch that withholds only those while leaving failures, the summary line, and exit codes untouched. Use when a test or build run is flooding the context, when the user asks to reduce test output or make tests quieter, when a suite prints a line per passing test, or when token-audit reports that test/build output is a large share of a session. Detects the project's own success marker and summary line first, refuses if it cannot find the summary, and says there is nothing worth doing when the projected saving is under 25%. Advises and patches; never drops in blind.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
   author: token-audit contributors
 ---
 

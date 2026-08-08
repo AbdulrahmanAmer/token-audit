@@ -3,7 +3,7 @@ name: code-map
 description: Answers "where is this symbol" and "what is in this file" for about 50 tokens instead of opening the file, by keeping a verified per-repo symbol cache. Use before reading a file to find one function, class, route, table or heading in it; when asked where something is defined; when orienting in an unfamiliar repository; or when a session is re-reading the same files it read last time. Every answer is re-checked against the file on disk, so a stale cache produces a miss and never a wrong location. Also measures what re-reading actually costs across past sessions. Regex-based and deliberately incomplete — fall back to Grep on a miss.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
   author: token-audit contributors
 ---
 
