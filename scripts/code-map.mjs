@@ -6,6 +6,8 @@
 //   node scripts/code-map.mjs outline <file>              # what is in this file, ~40 lines
 //   node scripts/code-map.mjs brief   [--root ...]        # orient in a repo, ~30 lines
 //   node scripts/code-map.mjs stats   [--root ...]
+//   node scripts/code-map.mjs hook install [--min-lines N] [--root ...]   # the read hook
+//   node scripts/code-map.mjs hook uninstall|status       [--root ...]
 //
 // ── What this is for, and the measurement that decided it ─────────────────────────────
 //
@@ -47,7 +49,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
 import { join, relative, resolve, extname, dirname, sep, isAbsolute } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // ── Languages ─────────────────────────────────────────────────────────────────────────
 //
@@ -524,6 +526,119 @@ export function renderBench(root, b) {
   return L.join('\n');
 }
 
+// ── Hook management ───────────────────────────────────────────────────────────────────
+//
+// The hook is the delivery mechanism that measurably works, so installing it must not
+// require hand-editing JSON. Three verbs, all on <root>/.claude/settings.json:
+//
+//   hook install [--min-lines N]   merge our PreToolUse entry in, idempotently
+//   hook uninstall                 remove exactly our entry, leave everything else alone
+//   hook status                    installed? effective threshold? kill switch?
+//
+// The merge is non-destructive by construction: parse, remove any previous copy of OUR
+// entry (recognised by its command containing code-map-hook.mjs), append the fresh one,
+// carry everything else through untouched. Installing twice therefore yields one entry.
+// An unparseable settings.json is REFUSED, never overwritten — a config file with a syntax
+// error is somebody's work in progress, not ours to delete. Same refusal when `hooks` or
+// `hooks.PreToolUse` has an unexpected shape: modifying a structure we do not understand
+// is how an installer eats a config.
+
+export const HOOK_MARK = 'code-map-hook.mjs';
+const HOOK_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'code-map-hook.mjs');
+const settingsPathFor = (root) => join(root, '.claude', 'settings.json');
+const isOurs = (h) => !!h && h.type === 'command' && typeof h.command === 'string' && h.command.includes(HOOK_MARK);
+
+function readSettings(root) {
+  const path = settingsPathFor(root);
+  if (!existsSync(path)) return { path, settings: {} };
+  let settings;
+  try { settings = JSON.parse(readFileSync(path, 'utf8')); } catch (e) {
+    throw new Error(`${path} is not valid JSON (${e.message}) — fix or remove it first; refusing to overwrite`);
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error(`${path} does not hold a settings object — refusing to overwrite`);
+  }
+  return { path, settings };
+}
+
+/** Strip our hook from every event. Drops an entry or event only if OUR removal emptied it. */
+function removeOurs(settings) {
+  const hooks = settings.hooks;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return 0;
+  let removed = 0;
+  for (const event of Object.keys(hooks)) {
+    const entries = hooks[event];
+    if (!Array.isArray(entries)) continue;
+    let eventRemoved = 0;
+    const kept = entries.filter((e) => {
+      if (!e || !Array.isArray(e.hooks)) return true;      // not ours to judge
+      const before = e.hooks.length;
+      e.hooks = e.hooks.filter((h) => !isOurs(h));
+      eventRemoved += before - e.hooks.length;
+      return e.hooks.length > 0 || before === e.hooks.length;
+    });
+    if (eventRemoved) {
+      removed += eventRemoved;
+      if (kept.length) hooks[event] = kept; else delete hooks[event];
+    }
+  }
+  if (removed && settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks;
+  return removed;
+}
+
+export function hookCommand({ minLines, hookScript = HOOK_SCRIPT } = {}) {
+  return `node "${hookScript}"${minLines ? ` --min-lines ${Math.floor(minLines)}` : ''}`;
+}
+
+export function hookInstall(root, { minLines, hookScript } = {}) {
+  const { path, settings } = readSettings(root);
+  removeOurs(settings);
+  if (settings.hooks == null) settings.hooks = {};
+  if (typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+    throw new Error(`"hooks" in ${path} is not an object — refusing to modify it`);
+  }
+  if (settings.hooks.PreToolUse == null) settings.hooks.PreToolUse = [];
+  if (!Array.isArray(settings.hooks.PreToolUse)) {
+    throw new Error(`"hooks.PreToolUse" in ${path} is not an array — refusing to modify it`);
+  }
+  const command = hookCommand({ minLines, hookScript });
+  settings.hooks.PreToolUse.push({ matcher: 'Read', hooks: [{ type: 'command', command }] });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
+  return { path, command };
+}
+
+export function hookUninstall(root) {
+  const path = settingsPathFor(root);
+  if (!existsSync(path)) return { path, removed: 0 };
+  const { settings } = readSettings(root);
+  const removed = removeOurs(settings);
+  if (removed) writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
+  return { path, removed };
+}
+
+/** Same threshold precedence as the hook itself: env (if sane) > installed flag > 300. */
+export function hookStatus(root, env = process.env) {
+  const path = settingsPathFor(root);
+  let command = null;
+  if (existsSync(path)) {
+    try {
+      const settings = JSON.parse(readFileSync(path, 'utf8'));
+      for (const entries of Object.values(settings?.hooks || {})) {
+        if (!Array.isArray(entries)) continue;
+        for (const e of entries) for (const h of (e && Array.isArray(e.hooks) ? e.hooks : [])) {
+          if (isOurs(h)) command = h.command;
+        }
+      }
+    } catch { /* unparseable settings reads as not-installed; install/uninstall refuse loudly */ }
+  }
+  const envMin = Number(env.CODE_MAP_HOOK_MIN_LINES);
+  const flagMatch = command ? command.match(/--min-lines\s+(\d+)/) : null;
+  const minLines = Number.isFinite(envMin) && envMin > 0 ? envMin
+    : flagMatch ? Number(flagMatch[1]) : 300;
+  return { installed: !!command, path, command, minLines, disabled: env.CODE_MAP_HOOK === 'off' };
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -566,6 +681,39 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(renderBrief(root, loadIndex(root, store)));
     process.exit(0);
   }
-  console.error('usage: code-map.mjs build|find <name>|outline <file>|brief|bench  [--root <repo>]');
+  if (cmd === 'hook') {
+    const sub = positional[0];
+    if (sub === 'install') {
+      const rawMin = value('--min-lines');
+      const minLines = rawMin != null ? Number(rawMin) : undefined;
+      if (rawMin != null && (!Number.isFinite(minLines) || minLines <= 0)) {
+        console.error('--min-lines must be a positive number');
+        process.exit(1);
+      }
+      const r = hookInstall(root, { minLines });
+      console.log(`code-map hook: installed in ${r.path}`);
+      console.log(`  ${r.command}`);
+      console.log('  per-session off switch: CODE_MAP_HOOK=off · remove: code-map.mjs hook uninstall');
+      process.exit(0);
+    }
+    if (sub === 'uninstall') {
+      const r = hookUninstall(root);
+      console.log(r.removed
+        ? `code-map hook: removed ${r.removed} entr${r.removed > 1 ? 'ies' : 'y'} from ${r.path}`
+        : `code-map hook: nothing to remove in ${r.path}`);
+      process.exit(0);
+    }
+    if (sub === 'status') {
+      const s = hookStatus(root);
+      console.log(`installed:   ${s.installed ? 'yes' : 'no'}  (${s.path})`);
+      if (s.command) console.log(`command:     ${s.command}`);
+      console.log(`threshold:   ${s.minLines} lines`);
+      console.log(`kill switch: ${s.disabled ? 'CODE_MAP_HOOK=off — the hook is DISABLED' : 'not set — active when installed'}`);
+      process.exit(0);
+    }
+    console.error('usage: code-map.mjs hook install [--min-lines N] | uninstall | status  [--root <repo>]');
+    process.exit(1);
+  }
+  console.error('usage: code-map.mjs build|find <name>|outline <file>|brief|bench|hook  [--root <repo>]');
   process.exit(1);
 }

@@ -13,6 +13,7 @@
 // verified answer apart from a lucky one.
 import {
   buildIndex, saveIndex, loadIndex, find, outline, extractSymbols, stripFor, bench, renderFind,
+  hookInstall, hookUninstall, hookStatus,
 } from '../code-map.mjs';
 import { classifySearch, bashNeedle, scanTranscript, measureCorpus, renderTax } from '../code-map-learn.mjs';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, unlinkSync, utimesSync } from 'node:fs';
@@ -445,6 +446,117 @@ it('hook: a missing or relative path is allowed, never guessed at', () => {
     'an unreadable file must be left for Read to error on honestly');
   assert(!runHook(readEvent('relative/path.mjs')).hookSpecificOutput,
     'a relative path cannot be resolved safely, so it must pass through');
+});
+
+it('hook: a garbage threshold degrades to the default, never to deny-happy NaN', () => {
+  // Number('garbage') is NaN and every comparison against NaN is false — which would skip
+  // the small-file allow and deny a 6-line file. A configuration typo must not do that.
+  const out = runHook(readEvent(smallFile), { CODE_MAP_HOOK_MIN_LINES: 'garbage' });
+  assert(!out.hookSpecificOutput, 'an unparseable threshold must not deny small files');
+  const big = runHook(readEvent(bigFile), { CODE_MAP_HOOK_MIN_LINES: 'garbage' });
+  assert(big.hookSpecificOutput?.permissionDecision === 'deny', 'the default threshold must still apply to large files');
+  const zero = runHook(readEvent(smallFile), { CODE_MAP_HOOK_MIN_LINES: '0' });
+  assert(!zero.hookSpecificOutput, 'a zero threshold is not sane and must not deny everything');
+});
+
+it('hook: --min-lines argv raises the bar, and the env override outranks it', () => {
+  // The argv flag is what `code-map.mjs hook install --min-lines N` writes into settings;
+  // the env var stays the per-session override on top of it.
+  const runWithArgs = (args, env = {}) => JSON.parse(execFileSync(process.execPath, [HOOK, ...args], {
+    input: JSON.stringify(readEvent(bigFile)), encoding: 'utf8',
+    env: { ...process.env, CODE_MAP_HOOK: '', CODE_MAP_HOOK_MIN_LINES: '', ...env },
+  }));
+  assert(!runWithArgs(['--min-lines', '1000']).hookSpecificOutput,
+    'a 372-line file sits under a 1000-line installed threshold');
+  assert(runWithArgs(['--min-lines', '1000'], { CODE_MAP_HOOK_MIN_LINES: '100' }).hookSpecificOutput?.permissionDecision === 'deny',
+    'the per-session env threshold must override the installed flag');
+  assert(runWithArgs(['--min-lines', 'garbage']).hookSpecificOutput?.permissionDecision === 'deny',
+    'a garbage flag value degrades to the default 300, which still catches a 372-line file');
+});
+
+// ── HOOK MANAGEMENT: merge in, never clobber ──────────────────────────────────────────
+//
+// `hook install` edits `.claude/settings.json`, a file that may already hold somebody's
+// permissions and somebody else's hooks. The contract: idempotent, surgical, and it refuses
+// what it cannot parse rather than overwriting it. An installer that eats a config file
+// costs more trust than the hook saves in dollars.
+
+const mgmtDir = (name, settings) => {
+  const dir = join(SB, name);
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  if (settings !== undefined) writeFileSync(join(dir, '.claude', 'settings.json'), settings);
+  return dir;
+};
+const settingsOf = (dir) => JSON.parse(readFileSync(join(dir, '.claude', 'settings.json'), 'utf8'));
+const oursIn = (settings) => Object.values(settings.hooks || {}).flat()
+  .filter((e) => e && Array.isArray(e.hooks) && e.hooks.some((h) => String(h.command).includes('code-map-hook.mjs')));
+
+it('hook install: installing twice yields exactly one entry, carrying the newest threshold', () => {
+  const dir = mgmtDir('hm-idempotent');
+  hookInstall(dir);
+  let s = settingsOf(dir);
+  assert(s.hooks.PreToolUse.length === 1 && s.hooks.PreToolUse[0].matcher === 'Read',
+    'first install should create one Read-matcher entry');
+  hookInstall(dir, { minLines: 500 });
+  s = settingsOf(dir);
+  const ours = oursIn(s);
+  assert(ours.length === 1, `installing twice must not duplicate — found ${ours.length} entries`);
+  assert(ours[0].hooks[0].command.includes('--min-lines 500'), 'reinstall must carry the new threshold');
+});
+
+const UNRELATED = JSON.stringify({
+  permissions: { allow: ['Bash(ls:*)'] },
+  hooks: {
+    PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node my-guard.mjs' }] }],
+    SessionStart: [{ hooks: [{ type: 'command', command: 'echo hello' }] }],
+  },
+}, null, 2);
+
+it('hook install: merges around existing hooks and settings, touching none of them', () => {
+  const dir = mgmtDir('hm-merge', UNRELATED);
+  hookInstall(dir);
+  const s = settingsOf(dir);
+  assert(s.permissions.allow[0] === 'Bash(ls:*)', 'unrelated settings must survive');
+  assert(s.hooks.SessionStart[0].hooks[0].command === 'echo hello', 'unrelated events must survive');
+  const guard = s.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
+  assert(guard && guard.hooks[0].command === 'node my-guard.mjs', 'the pre-existing PreToolUse hook must survive');
+  assert(oursIn(s).length === 1, 'our entry should be added alongside, not instead');
+});
+
+it('hook uninstall: removes exactly our entry and nothing else', () => {
+  const dir = mgmtDir('hm-uninstall', UNRELATED);
+  hookInstall(dir);
+  const r = hookUninstall(dir);
+  assert(r.removed === 1, `expected to remove exactly 1 hook, removed ${r.removed}`);
+  const s = settingsOf(dir);
+  assert(oursIn(s).length === 0, 'our entry must be gone');
+  assert(s.hooks.PreToolUse.some((e) => e.matcher === 'Bash'), 'the unrelated PreToolUse hook must remain');
+  assert(s.hooks.SessionStart && s.permissions, 'everything else must remain');
+  assert(hookUninstall(dir).removed === 0, 'a second uninstall has nothing to remove');
+  const empty = mgmtDir('hm-uninstall-empty');
+  assert(hookUninstall(empty).removed === 0, 'uninstall with no settings file is a no-op, not an error');
+});
+
+it('hook status: reports installed, effective threshold, and the kill switch', () => {
+  const dir = mgmtDir('hm-status');
+  let st = hookStatus(dir, {});
+  assert(!st.installed && st.minLines === 300 && !st.disabled, 'empty root: not installed, defaults');
+  hookInstall(dir, { minLines: 444 });
+  st = hookStatus(dir, {});
+  assert(st.installed && st.minLines === 444, 'status must read the installed threshold back');
+  st = hookStatus(dir, { CODE_MAP_HOOK: 'off', CODE_MAP_HOOK_MIN_LINES: '500' });
+  assert(st.disabled, 'CODE_MAP_HOOK=off must be reported');
+  assert(st.minLines === 500, 'the env threshold outranks the installed flag, same as in the hook');
+});
+
+it('hook install: refuses an unparseable settings.json and leaves it byte-identical', () => {
+  const broken = '{ this is not JSON';
+  const dir = mgmtDir('hm-broken', broken);
+  let threw = false;
+  try { hookInstall(dir); } catch { threw = true; }
+  assert(threw, 'install into a corrupt settings.json must throw, not clobber');
+  assert(readFileSync(join(dir, '.claude', 'settings.json'), 'utf8') === broken,
+    'the broken file must be left exactly as it was');
 });
 
 rmSync(SB, { recursive: true, force: true });

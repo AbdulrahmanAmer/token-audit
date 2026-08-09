@@ -47,7 +47,7 @@ Then ask *"where did this session's tokens go?"*, or run `/token-audit`.
 | `token-audit` | Reads the transcript Claude Code already writes and reports where a session's tokens went: re-read cost, repeated test output, shell output by kind, cost per commit. | `/token-audit` |
 | `quiet-tests` | Measures how much of a project's test output is per-test PASS announcements, then proposes a patch that withholds only those. Refuses when the projected saving is under 25%. | `/quiet-tests` |
 | `code-index` | Generates a deterministic, greppable fact table — one line per fact — for what you must know about a file without opening it. Config-driven, derived never authored, `--check` in CI. | `/code-index` |
-| `code-map` | Answers "where is X" and "what's in this file" for ~50 tokens instead of opening it. Every answer re-verified against disk, so a stale cache misses rather than lies. | `/code-map` |
+| `code-map` | Cuts large-file read cost — a fail-open `Read` hook serves outlines instead of whole files (−71.2% across six paired tasks, n=6), plus `find`/`outline`/`brief`. Every answer re-verified against disk, so a stale cache misses rather than lies. | `/code-map` |
 
 `scripts/check-manifests.mjs` fails CI if a skill ships without a row here, or a row here
 names a skill that does not ship — both are silent failures for whoever installs this.
@@ -281,10 +281,69 @@ So this is not a search index and it does not replace grep — Anthropic
 search](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). It
 attacks the read side, by **replacing reading the wrong amount.**
 
-### Does an agent actually use it? Measured: no.
+### The hook: −71.2% cost across six paired tasks
 
-The question that decides whether any number below matters: given a real task, does an agent
-reach for this on its own? A controlled trial answered it. **24 tasks × 2 arms** on a
+The delivery mechanism that works is the one that does not need to be chosen. `code-map`'s
+**`PreToolUse` hook** sits in front of `Read`: when the model asks for an entire large file
+(over 300 lines, no `offset`/`limit`), it denies that one call and returns the file's
+outline — every symbol with its line number — plus instructions to come back for a slice, or
+for the explicit full-file range if genuinely needed. Installing is one command, and so is
+leaving:
+
+```bash
+node scripts/code-map.mjs hook install                   # merges into .claude/settings.json
+node scripts/code-map.mjs hook install --min-lines 500   # raise the threshold (default 300)
+node scripts/code-map.mjs hook status                    # installed? threshold? kill switch?
+node scripts/code-map.mjs hook uninstall                 # removes only its own entry
+```
+
+The merge is non-destructive and idempotent — existing hooks and settings survive, installing
+twice does not duplicate, and an unparseable `settings.json` is refused, never overwritten.
+Per-session kill switch: `CODE_MAP_HOOK=off`.
+
+Six paired large-file tasks, same clone, same model, hook off vs on — **n=6, one repo**:
+
+| task | off | on | delta |
+|---|---|---|---|
+| H1 | $0.7415 | $0.1366 | −81.6% |
+| H2 | $0.3500 | $0.1082 | −69.1% |
+| H3 | $0.5272 | $0.1770 | −66.4% |
+| H4 | $0.4982 | $0.1543 | −69.0% |
+| H5 | $0.5082 | $0.1103 | −78.3% |
+| H6 | $0.3626 | $0.1748 | −51.8% |
+| **total** | **$2.9877** | **$0.8612** | **−71.2%** |
+
+Every task negative, and cache writes fell 10–20× on every one. *Caveat, stated rather than
+buried:* **H3 is contaminated** — one arm invoked the skill twice, the other zero. Excluding
+it the total is $2.4605 → $0.6842, **−72.2%**, so the headline does not depend on it.
+
+**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
+cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
+$0.50/MTok — 12.5× cheaper. Billed token counts stayed flat (+0.4% on the paired single-task
+run) while cost fell ~71%, which is why count-based measurement looked flat. The hook does
+**not** help symbol lookup — Grep wins that, correctly; it targets whole-file reads only.
+
+**It sits in front of `Read` and fails open by design.** Every path it does not positively
+understand allows the read: explicit slices, small files, unsupported languages, unreadable
+files, fewer than 3 symbols, malformed input, a garbage threshold value (degrades to the
+default), any thrown error. Each allow path is pinned by a test; mutants that deny small
+files, deny slices, or deny on parse failure each turn the suite red. It reads only the file
+the model asked for, writes nothing, and has no network access.
+
+### Adoption, corrected — what v0.7.0 and v0.7.1 over-claimed
+
+Those releases reported the trial below as **"the skill never fires."** That conclusion was
+too broad, and this section corrects it: all 30 of those runs asked *"where is symbol X"* or
+*"enumerate every Y"* — tasks Grep answers correctly, in one call, with no setup. Adoption
+was tested on the one task type the tool is not for. On **large-file comprehension** tasks —
+the six-task set above — the agent invokes the skill unprompted, via
+`Skill {"skill":"code-map"}`: **5 invocations across the set.** The honest statement:
+
+> `code-map` is not adopted for symbol lookup, correctly, because Grep answers that better.
+> It **is** adopted when the alternative is reading a whole large file.
+
+The evidence, which stands unchanged even as its interpretation narrows: **24 tasks × 2
+arms** on a
 99k-line production codebase (638 files, 99,048 lines under `src/`). Prompts
 **byte-identical** — the only difference between the arms was what was installed on disk.
 Arm B had `code-map` installed as a real project skill, advertised in its skills listing,
@@ -313,10 +372,8 @@ Cost: $10.0280 vs $9.9020 (−1.3%), billed tokens 5,602,597 vs 5,556,003 (−0.
 skill never invoked, those deltas are run-to-run noise between two arms that behaved
 identically — reported because pre-registration requires it, not because they mean anything.
 
-**On this evidence, the saving `bench` measures below is available and not taken.** The
-mechanism is not disproved — it was never invoked, so it was never tested. What was measured
-is adoption: installed and advertised is not enough to make the skill fire, so its value is
-contingent on being invoked explicitly. Scope: one repo, 24 tasks, n=1 per item.
+**On this evidence the skill is not chosen for symbol lookup — and that is the correct
+choice, not a defect: Grep scored 12/12.** Scope: one repo, 24 tasks, n=1 per item.
 
 **Follow-up — is the description what fails? Tested: no.** v0.7.0 shipped that hypothesis
 labelled untested. Same clone, same frozen tasks, same model and effort; **only the skill's
@@ -330,70 +387,18 @@ outright — *"Run this BEFORE reaching for Grep … Prefer it over Grep for loc
 | v2 — "prefer over Grep" | 6 | 6/6 | **0** | 6/6 |
 | combined | **30** | 30/30 | **0** | — |
 
-> An installed, advertised, plainly-described skill still loses to `Grep` on the exact task it
-> was built for — because `Grep` already answers that task correctly, in one call, with no
-> setup. `code-map` is not competing against an absence; it is competing against a good tool
-> that is already there. That is not a description problem, and no wording fixes it.
+> An installed, advertised, plainly-described skill still loses to `Grep` on symbol lookup —
+> because `Grep` already answers that correctly, in one call, with no setup. No wording fixes
+> that, and this project has stopped trying: for symbol lookup, Grep is the right tool.
 
-n=6 for v2, one description variant, one repo — this does not prove that no description could
-ever work; it proves the obvious one does not, and shifts the burden of proof onto anyone
-claiming the next rewrite will. What remains defensible is exactly what the trial did not
-test, because Grep cannot serve it: `outline` on a large file, and `brief` for orienting in
-an unfamiliar repo. Untested and plausible — the subject of any next trial, not claims
-validated by this one.
+n=6 for v2, one description variant, one repo. What v0.7.1 called "untested and plausible" —
+value on the tasks Grep cannot serve — has since been measured: outline-shaped help on large
+files is exactly what the hook delivers (−71.2%, table above), and the six comprehension
+tasks drew 5 unprompted skill invocations. `brief` for orientation remains unmeasured.
 
-### The fix that ships in v0.8.0: a hook, which does not need to be chosen
-
-A skill needs the model to *choose* it, and 30 runs say it never does. A **`PreToolUse`
-hook** fires on the call the model was already making. `scripts/code-map-hook.mjs` sits in
-front of `Read`: when the model asks for an entire large file (over 300 lines, no
-`offset`/`limit`), it denies that one call and returns the file's outline — every symbol with
-its line number — plus instructions to come back for a slice, or for the explicit full-file
-range if genuinely needed. Measured on one large-file task, same clone, same model —
-**n=1, one task; a six-task paired A/B is running and will be published when it exists**:
-
-| | hook off | hook on | |
-|---|---|---|---|
-| cost | $0.4082 | **$0.1855** | **−54.6%** |
-| cache write | 29,281 | 5,655 | **−80.7%** |
-| billed tokens | 190,061 | 190,759 | +0.4% |
-| turns | 5 | 5 | unchanged |
-
-**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
-cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
-$0.50/MTok — 12.5× cheaper. That asymmetry is why cost halves while billed tokens barely
-move, and why count-based measurements looked flat.
-
-Install — add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global),
-with the absolute path of your checkout or plugin install:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/absolute/path/to/token-audit/scripts/code-map-hook.mjs\""
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-- **Kill switch:** set `CODE_MAP_HOOK=off` in the environment and every read passes through.
-- **Threshold:** `CODE_MAP_HOOK_MIN_LINES=500` raises the bar (default 300) — below it, the
-  extra round trip costs more than the file.
-- **It sits in front of `Read` and fails open by design.** Every path it does not positively
-  understand allows the read: explicit slices, small files, unsupported languages, unreadable
-  files, files with fewer than 3 symbols, malformed input, any thrown error. Each allow path
-  is pinned by a test, and three mutants (deny small files; deny slices; deny on parse
-  failure) each turn the suite red. It reads only the file the model asked for, writes
-  nothing, and has no network access.
+(The first paired hook measurement, a single task, showed the same shape: cost −54.6%, cache
+write −80.7%, billed tokens +0.4%, turns unchanged. Superseded by the six-task table above;
+kept as the source of the +0.4% token-count figure.)
 
 ```bash
 node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo
@@ -433,9 +438,10 @@ deduplicated by `message.id` — the answer is **no**:
 The extra round trips (14 → 24 tool calls) each re-send the conversation, and re-sent context
 bills as cache reads at a tenth of the input rate — which is how billed tokens can rise 47%
 while dollars stay flat. **n=1**, one task, one repo — and Arm B was *told* to use the map, so
-this measures the ceiling when the skill fires, not adoption. Whether it fires on its own has
-since been measured — see *"Does an agent actually use it?"* above: in 30 of 30 uncoached
-runs, across two description variants, it did not.
+this measures the ceiling when the skill fires, not adoption. Adoption has since been
+measured, and it is task-shaped — see *"Adoption, corrected"* above: never for symbol lookup
+(30/30, correctly — Grep wins those), unprompted for large-file comprehension (5 invocations
+across six tasks).
 
 This table has been corrected twice, and each correction made the tool look worse and the
 measurement better. v0.5.0 shipped **−11%** "total agent tokens" — a figure derived from

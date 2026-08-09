@@ -1,76 +1,81 @@
 ---
 name: code-map
-description: A verified per-repo symbol map with two delivery mechanisms — a PreToolUse hook that automatically intercepts whole-file Reads of large files and returns the outline instead, and the /code-map command for explicit lookups (find a symbol's definition, outline a large file, brief an unfamiliar repo). Use this skill when asked to set up, tune or disable the read hook, when asked where a symbol is defined, or when orienting in a new repository. Do not expect it to fire on its own — measured across 30 advertised runs, a model never chose it; invoke it, or install the hook. Every answer is re-verified against the file on disk, so a stale cache produces a miss and never a wrong location. Regex-based and deliberately incomplete — fall back to Grep on a miss.
+description: Cuts the cost of large-file reads with a verified per-repo symbol map, delivered three ways in order of measured value — a PreToolUse hook that automatically intercepts whole-file Reads of large files and returns the outline (−71.2% cost across six paired tasks, n=6), the /code-map command, and find/outline/brief as manual tools. Use when asked to install, tune or disable the read hook, when a large file needs slicing or outlining, when orienting in an unfamiliar repository, or when asked where a symbol is defined. Not a Grep replacement — for symbol lookup agents correctly prefer Grep (0/30 measured) and the hook does not target that; it targets whole-file reads. Every answer re-verified against disk: a stale cache misses, never lies. Regex-based; fall back to Grep on a miss.
 license: MIT
 metadata:
-  version: "0.8.0"
+  version: "0.9.0"
   author: token-audit contributors
 ---
 
-# Code Map — the version that works is the one that isn't optional
+# Code Map — three ways in, in order of measured value
 
-**Measured reality, stated before anything else:** as an auto-firing skill, this is dead.
-**0 invocations across 30 runs** in which it was installed and advertised in the model's own
-skills listing, under two descriptions — one of which said outright *"Run this BEFORE reaching
-for Grep."* That is not a wording problem: a skill needs the model to *choose* it, and the
-model already has a tool that answers the question correctly, in one call, with no setup — it
-reads the file, or greps, and gets the right answer. The full trial is in the README.
+**1. The hook** — automatic, `PreToolUse` on `Read`. Measured across six paired large-file
+tasks: **−71.2% cost**. This is the delivery mechanism that works, because it fires on the
+call the model was already making.
+**2. The `/code-map` command** — explicit setup and lookups; you invoke it.
+**3. `find` / `outline` / `brief`** — manual tools for one-off questions.
 
-So `code-map` ships as two mechanisms, neither of which depends on being chosen:
+**Adoption, measured and corrected (v0.9.0):** v0.7.x reported "0 invocations in 30
+advertised runs" as *the skill never fires*. That conclusion was too broad — all 30 of those
+runs were symbol-lookup and pattern tasks, which Grep answers correctly in one call. The
+corrected finding: `code-map` is **not** adopted for symbol lookup, *correctly*, because Grep
+answers that better — and it **is** adopted unprompted for large-file comprehension, where
+the alternative is reading the whole file (5 invocations across the six-task set). The hook
+exists so the saving does not depend on that choice at all.
 
-1. **The hook** — automatic. It fires on the wasteful call the model was already making.
-2. **The `/code-map` command** — explicit. You invoke it; it answers.
+## The hook — automatic, −71.2% measured
 
-Why the read side is the target at all — measured on 589 real sessions (1.27 GB of
-transcript, ~8.3M tokens shown to the model):
+When the model asks for a whole large file — over `CODE_MAP_HOOK_MIN_LINES` lines (default
+300), no `offset`/`limit` — the hook denies that one call and returns the file's outline:
+every symbol with its line number, plus instructions to come back with a slice, or with an
+explicit full-file range if the whole thing is genuinely needed.
 
-| | tokens | share of everything shown |
-|---|---|---|
-| file reads | 4,082,513 | **49%** |
-| — of which whole-file (72% of reads) | 2,860,089 | 34% |
-| **re-read in a later session** | **1,532,261** | **18%** |
-| re-read within one session | 1,014,644 | 12% |
-| search (grep/glob) | 616,119 | 7% |
-| **repeated searches** | 36,715 | **0.4%** |
+Install, check, remove — one command each; no hand-edited JSON:
 
-## The hook — automatic, and the part that measurably works
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map.mjs hook install [--min-lines 500] [--root <repo>]
+node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map.mjs hook status
+node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map.mjs hook uninstall
+```
 
-`scripts/code-map-hook.mjs` is a `PreToolUse` hook on `Read`. When the model asks for a whole
-large file — over `CODE_MAP_HOOK_MIN_LINES` lines (default 300), no `offset`/`limit` — the
-hook denies that one call and returns the file's outline instead: every symbol with its line
-number, plus instructions to come back with a slice, or with an explicit full-file range if
-the whole thing is genuinely needed.
+`install` merges into `.claude/settings.json` non-destructively and idempotently — existing
+hooks and settings are preserved, installing twice does not duplicate, an unparseable
+settings file is refused rather than overwritten, and `uninstall` removes only its own entry.
+Per-session kill switch: `CODE_MAP_HOOK=off`. Per-session threshold override:
+`CODE_MAP_HOOK_MIN_LINES=500` (outranks the installed `--min-lines` flag).
 
-Measured on one large-file task, same clone, same model — **n=1, one task; a wider paired
-A/B across six tasks is running and its totals will be published when they exist, not
-extrapolated now**:
+Six paired large-file tasks, same clone, same model, hook off vs on — **n=6, one repo**:
 
-| | hook off | hook on | |
+| task | off | on | delta |
 |---|---|---|---|
-| cost | $0.4082 | **$0.1855** | **−54.6%** |
-| cache write | 29,281 | 5,655 | **−80.7%** |
-| billed tokens | 190,061 | 190,759 | +0.4% |
-| turns | 5 | 5 | unchanged |
+| H1 | $0.7415 | $0.1366 | −81.6% |
+| H2 | $0.3500 | $0.1082 | −69.1% |
+| H3 | $0.5272 | $0.1770 | −66.4% |
+| H4 | $0.4982 | $0.1543 | −69.0% |
+| H5 | $0.5082 | $0.1103 | −78.3% |
+| H6 | $0.3626 | $0.1748 | −51.8% |
+| **total** | **$2.9877** | **$0.8612** | **−71.2%** |
+
+Every task negative; cache writes fell 10–20× on every one. *Caveat, stated rather than
+buried:* **H3 is contaminated** — one arm invoked the skill twice, the other zero. Excluding
+it: $2.4605 → $0.6842, **−72.2%**, so the headline does not depend on it.
 
 **The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
-cache *write* at $6.25/MTok. The conversation re-sent on a later turn is a cache *read* at
-$0.50/MTok — 12.5× cheaper. Swapping an expensive write for a slice plus cheap reads is why
-cost halves while token counts barely move, and why every count-based measurement in this
-project looked flat.
+cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
+$0.50/MTok — 12.5× cheaper (published rates). Billed token counts stayed flat (+0.4% on the
+paired single-task run) while cost fell ~71%, which is why count-based measurement looked
+flat. **The hook does not help symbol lookup and must not be pitched as doing so** — it
+targets whole-file reads, nothing else.
 
 **It fails open, always.** Every path the hook does not positively understand allows the
 read: explicit slice, small file, unsupported language, unreadable file, fewer than 3
-symbols, malformed stdin, `CODE_MAP_HOOK=off`, any thrown error. Each of those allows is
-pinned by its own test, and three mutants — deny small files, deny slices, deny on parse
-failure — each turn the suite red. It never blocks a read it did not understand.
+symbols, malformed stdin, a garbage threshold value (degrades to the default, never to
+deny-happy NaN), `CODE_MAP_HOOK=off`, any thrown error. Each allow path is pinned by its own
+test, and mutants that deny small files, deny slices, or deny on parse failure each turn the
+suite red. It reads only the file the model asked for, writes nothing, and has no network
+access.
 
-Install: a `PreToolUse` entry with matcher `Read` running
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map-hook.mjs` — the exact `.claude/settings.json`
-block is in the README. Kill switch: `CODE_MAP_HOOK=off`. Threshold:
-`CODE_MAP_HOOK_MIN_LINES=500` (default 300). The hook reads only the file the model asked
-for; it writes nothing, and it has no network access.
-
-## The command — explicit; use it in this order
+## The command and manual tools — explicit; use in this order
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map.mjs build --root <repo>   # once per session
@@ -96,27 +101,24 @@ location question:
 |---|---|---|---|
 | median tokens | 2,504–3,710 | 563–606 (**−76% to −85%**) | 135–182 (**−95%**) |
 
-These figures are arithmetic over files — the saving *available* per question, not one
-measured as realised by an agent choosing this on its own; measured, agents do not choose it.
-The hook exists precisely to close that gap, and its n=1 result above is the first *realised*
-measurement in this project. The map is **worse** for 5–26% of files — ones small enough that
-reading them costs less than slicing them. Below ~40 lines, just read the file.
+These figures are arithmetic over files — the saving *available* per question. The hook's
+−71.2% (n=6 above) is the *realised* number. The map is **worse** for 5–26% of files — ones
+small enough that reading them costs less than slicing them. Below ~40 lines, just read the
+file.
 
-## Reach for the command when
+## Reach for the manual tools when
 
 - You are about to open a file to look at **one** function, class, route, SQL table or heading.
-- You are asked where something is defined.
-- You are new to a repo — `brief` gives the directory shape and the densest files for ~200 tokens.
 - A file you need is large. **Outline first**, then slice.
+- You are new to a repo — `brief` gives the directory shape and the densest files for ~200 tokens.
 
-## Do not reach for it when
+## Do not reach for them when
 
+- The question is symbol lookup or a content search and Grep is one call away — **Grep wins
+  those, measured**. Anthropic tested embedding-based retrieval for Claude Code against plain
+  agentic search and kept agentic search; this does not replace it.
 - You need to **edit** the file, or reason about code far from one symbol. Read it properly.
 - The file is small.
-- The question is a **content** search — "every call that passes null", anything regex-shaped.
-  That is what Grep is for, and Grep is genuinely good at it. Anthropic tested embedding-based
-  retrieval for Claude Code against plain agentic search and **kept agentic search**; this does
-  not replace it and must not be described as doing so.
 
 ## Why it can be trusted without checking
 
@@ -130,17 +132,16 @@ fresh scan. So **a stale cache produces a miss, never a wrong location** — the
 consults the store at all — it outlines the live file it just intercepted.
 
 Build is incremental: a 16,000-file repo is ~46s cold and **~6s warm**; an 850-file repo is
-0.3s warm. Run `build` once at the start of a session.
+0.3s warm.
 
 ## Nothing is injected into context
 
 Anthropic's context-engineering guidance is explicit that recall **degrades** as context
 grows — *"as the number of tokens in the context window increases, the model's ability to
-accurately recall information from that context decreases."* An always-on index would trade
-tokens for accuracy and lose twice. So nothing here is loaded up front — the hook responds
-only to a Read the model already made, and the command returns a few lines when asked. That
-is also why the cache file is never pasted into a prompt: **if you are tempted to cat
-`.claude/code-map/symbols.tsv` into context, do not** — query it.
+accurately recall information from that context decreases."* Nothing here is loaded up front —
+the hook responds only to a Read the model already made, and the command returns a few lines
+when asked. **If you are tempted to cat `.claude/code-map/symbols.tsv` into context, do
+not** — query it.
 
 ## Honest limits — say these rather than let someone discover them
 
@@ -150,8 +151,10 @@ is also why the cache file is never pasted into a prompt: **if you are tempted t
 - Skips files over 1 MB and minified/bundled files (long-line shape).
 - `find` matches names, not usages. "Who calls this" is `code-index`'s `IMPORTEDBY`, or Grep.
 - The cache lives in `.claude/code-map/` in the repo. Add it to `.gitignore`.
-- The hook's cost result is **n=1** until the six-task A/B reports. The 12.5× write/read price
-  asymmetry it relies on is from the published rate card, not measured.
+- The hook figures are **n=6, one repo, and H3 is contaminated** (excluded total −72.2%). The
+  12.5× write/read price asymmetry is from the published rate card, not measured.
+- The adoption finding is one repo and 36 runs total across both trials. It licenses "Grep
+  wins symbol lookup" and "large-file comprehension gets unprompted use", nothing broader.
 
 ## The measurement half
 

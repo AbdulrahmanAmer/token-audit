@@ -38,12 +38,21 @@
 // the agent for the sake of a token saving, which is a catastrophically bad trade.
 //
 //   Disable entirely:  CODE_MAP_HOOK=off
-//   Change threshold:  CODE_MAP_HOOK_MIN_LINES=500   (default 300)
+//   Change threshold:  CODE_MAP_HOOK_MIN_LINES=500 (env, per session), or the persistent
+//                      `--min-lines 500` argv flag that `code-map.mjs hook install` writes.
+//                      Env wins over the flag; default 300.
 
 import { readFileSync, statSync } from 'node:fs';
 import { extname, isAbsolute } from 'node:path';
 
-const MIN_LINES = Number(process.env.CODE_MAP_HOOK_MIN_LINES || 300);
+// Fail-open applies to configuration too: a garbage threshold must degrade to the default,
+// not to NaN — every comparison against NaN is false, which would silently disable the
+// small-file allow and turn a typo into "deny small files".
+const sane = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+const flagIdx = process.argv.indexOf('--min-lines');
+const MIN_LINES = sane(process.env.CODE_MAP_HOOK_MIN_LINES)
+  ?? sane(flagIdx >= 0 ? process.argv[flagIdx + 1] : null)
+  ?? 300;
 const ALLOW = () => { process.stdout.write('{}'); process.exit(0); };
 
 /** Everything below is best-effort. Any doubt at all -> allow the read. */

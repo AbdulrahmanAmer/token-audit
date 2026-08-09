@@ -17,6 +17,7 @@ scripts/code-index.mjs	GUARD	scripts/test/code-index.test.mjs
 scripts/code-index.mjs	WHY	scripts/code-index.mjs:17 OR IT COSTS MORE THAN IT SAVES
 scripts/code-index.mjs	WHY	scripts/code-index.mjs:20 NO GENERATION DATE
 scripts/code-map-hook.mjs	IS	a PreToolUse hook on Read. This is the part that actually works.
+scripts/code-map-hook.mjs	CLI	--min-lines
 scripts/code-map-hook.mjs	USES	scripts/code-map.mjs
 scripts/code-map-hook.mjs	SPAWNEDBY	scripts/test/code-map.test.mjs
 scripts/code-map-hook.mjs	GUARD	scripts/test/code-map.test.mjs
@@ -27,11 +28,12 @@ scripts/code-map-learn.mjs	GUARD	scripts/test/code-map.test.mjs
 scripts/code-map-learn.mjs	WHY	scripts/code-map-learn.mjs:17 A FEATURE THIS WAS SUPPOSED TO HAVE
 scripts/code-map-learn.mjs	WHY	scripts/code-map-learn.mjs:19 WHAT WAS SEARCHED FOR
 scripts/code-map.mjs	IS	where is it, and what is in it, without opening the file.
+scripts/code-map.mjs	CLI	--min-lines
 scripts/code-map.mjs	DEFINES	LANGS
 scripts/code-map.mjs	IMPORTEDBY	scripts/code-map-hook.mjs scripts/test/code-map.test.mjs
 scripts/code-map.mjs	GUARD	scripts/test/code-map.test.mjs
-scripts/code-map.mjs	WHY	scripts/code-map.mjs:33 THE INDEX IS A CACHE
-scripts/code-map.mjs	WHY	scripts/code-map.mjs:466 STATED SO IT CAN BE DISAGREED WITH
+scripts/code-map.mjs	WHY	scripts/code-map.mjs:35 THE INDEX IS A CACHE
+scripts/code-map.mjs	WHY	scripts/code-map.mjs:468 STATED SO IT CAN BE DISAGREED WITH
 scripts/quiet-tests.mjs	IS	find out whether a repo's test output is worth quieting, and by how much.
 scripts/quiet-tests.mjs	CLI	--apply --cmd --dir --json
 scripts/quiet-tests.mjs	DEFINES	MARKERS SUMMARY_PATTERNS WORTH_DOING applyPatch detectCommand detectGates detectMarker detectSummary findEmitters measure proposePatch renderDiff report runSuite

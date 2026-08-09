@@ -2,6 +2,79 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.9.0] — 2026-08-09
+
+Two things, in order of importance: **a correction of v0.7.x's headline claim**, and the
+six-task measurement of the hook that replaces it.
+
+### Corrected: "the skill never fires (0/30)" was too broad
+v0.7.0 and v0.7.1 concluded `code-map` is never adopted. All 30 of those runs asked *"where
+is symbol X"* or *"enumerate every Y"* — tasks Grep answers correctly, in one call, with no
+setup. Adoption was tested on the one task type the tool is not for. On **large-file
+comprehension** tasks the agent invokes the skill unprompted, via `Skill
+{"skill":"code-map"}` — **5 invocations across the six-task set**. The corrected statement,
+now in the README and the skill:
+
+> `code-map` is not adopted for symbol lookup, correctly, because Grep answers that better.
+> It **is** adopted when the alternative is reading a whole large file.
+
+The 0/30 data stands; its interpretation narrows to symbol lookup. Scope: one repo, 36 runs
+total across both trials.
+
+### Measured: the hook, six paired large-file tasks, hook off vs on
+Same clone, same model — **n=6, one repo**:
+
+| task | off | on | delta |
+|---|---|---|---|
+| H1 | $0.7415 | $0.1366 | −81.6% |
+| H2 | $0.3500 | $0.1082 | −69.1% |
+| H3 | $0.5272 | $0.1770 | −66.4% |
+| H4 | $0.4982 | $0.1543 | −69.0% |
+| H5 | $0.5082 | $0.1103 | −78.3% |
+| H6 | $0.3626 | $0.1748 | −51.8% |
+| **total** | **$2.9877** | **$0.8612** | **−71.2%** |
+
+Every task negative; cache writes fell 10–20× on every one. **H3 is contaminated** — one arm
+invoked the skill twice, the other zero — so the total is reported both ways: with H3
+−71.2%, without it $2.4605 → $0.6842 = **−72.2%**. The headline does not depend on the
+contaminated pair.
+
+**The mechanism is price, not volume.** Billed token counts stayed flat (+0.4% on the paired
+single-task run) while cost fell ~71%: a large file entering context is a cache **write** at
+$6.25/MTok, and the outline plus cheap cache **reads** at $0.50/MTok replaces it — 12.5×.
+The hook does not help symbol lookup and is not claimed to.
+
+### Added: `code-map.mjs hook install|uninstall|status`
+Nobody hand-edits JSON anymore:
+- `hook install [--root <repo>] [--min-lines N]` merges the `PreToolUse` block into
+  `<root>/.claude/settings.json` — non-destructively (existing hooks, permissions and
+  settings survive) and idempotently (installing twice yields one entry; the newest
+  threshold wins). An unparseable settings file is **refused, never overwritten**.
+- `hook uninstall` removes exactly our entry; everything else is left alone.
+- `hook status` reports installed/threshold/kill-switch, with the same precedence the hook
+  itself uses (env over installed flag over default 300).
+- The hook itself now takes the `--min-lines` flag that install writes, and a fail-open gap
+  was closed: a garbage `CODE_MAP_HOOK_MIN_LINES` used to become `NaN`, which silently
+  disabled the small-file allow and would have denied small files. It now degrades to the
+  default, and a test pins that.
+
+### Tests
+7 new (105 total across 4 suites, was 98): idempotent install; merge preserves unrelated
+hooks and settings; uninstall removes only ours; status correctness; refusal to clobber a
+corrupt settings.json; garbage-threshold fail-open; argv/env threshold precedence.
+Mutation-verified, three mutants: install without dedup (1 red), install that ignores the
+existing file (3 red), uninstall that deletes all hooks (1 red).
+
+### Changed
+- `skills/code-map/SKILL.md` rewritten around the three mechanisms in order of measured
+  value: hook (−71.2%, n=6), `/code-map` command, manual `find`/`outline`/`brief`. The
+  "never fires" framing is replaced by the corrected adoption finding; every limitation
+  kept.
+- `README.md` — the Code Map section now leads with the hook and the six-task table, then
+  the corrected adoption finding, then the manual tools. Install is one command; the
+  hand-written JSON block is gone.
+- Versions to 0.9.0.
+
 ## [0.8.0] — 2026-08-09
 
 **The skill did not work. The hook does. And the reason is the price of tokens, not the
