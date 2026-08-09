@@ -2,6 +2,58 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.8.0] — 2026-08-09
+
+**The skill did not work. The hook does. And the reason is the price of tokens, not the
+count of them.** `code-map` as an auto-firing skill measured 0 invocations in 30 advertised
+runs (v0.7.0/v0.7.1); this release ships the delivery mechanism that does not need to be
+chosen — a `PreToolUse` hook that fires on the `Read` call the model was already making.
+
+### Added: `scripts/code-map-hook.mjs`
+When the model asks for an entire large file — over `CODE_MAP_HOOK_MIN_LINES` lines (default
+300), no `offset`/`limit` — the hook denies that one call and returns the file's outline:
+every symbol with its line number, plus instructions to come back with a slice, or with an
+explicit full-file range if the whole thing is genuinely needed.
+
+Measured on one large-file task, same clone, same model — **n=1, one task; a six-task paired
+A/B is running and its totals will be published when they exist, not extrapolated now**:
+
+| | hook off | hook on | |
+|---|---|---|---|
+| cost | $0.4082 | **$0.1855** | **−54.6%** |
+| cache write | 29,281 | 5,655 | **−80.7%** |
+| billed tokens | 190,061 | 190,759 | +0.4% |
+| turns | 5 | 5 | unchanged |
+
+**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
+cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
+$0.50/MTok — a 12.5× price difference on the bytes that matter (published rates, not
+measured). Token counts barely move, which is exactly why every count-based measurement in
+this project looked flat — including this project's own byte accounting until v0.6.0.
+
+**Fail open, always.** The hook never blocks a read it did not positively understand. Allowed
+by design and each pinned by its own test: explicit slices, small files, unsupported
+languages, unreadable files, files with fewer than 3 symbols, malformed stdin, the
+`CODE_MAP_HOOK=off` kill switch, and any thrown error. Install block, kill switch and
+threshold are documented in the README.
+
+### Tests
+8 new hook tests in `scripts/test/code-map.test.mjs` (98 total across 4 suites, was 90): the
+deny case carries the outline and the escape hatch; every allow path above is asserted
+individually. Mutation-verified, three mutants: deny small files (1 red), deny explicit
+slices (1 red), deny on parse failure instead of allowing (1 red).
+
+### Changed: the skill is demoted to match measurement
+- `skills/code-map/SKILL.md` no longer presents itself as something that fires on its own —
+  it does not (0/30, two descriptions). Rewritten around the two delivery mechanisms that do
+  not depend on being chosen: the hook (automatic) and `/code-map` (explicit). The bench
+  figures stay, labelled *available per question*; the hook's n=1 result is the first
+  **realised** saving this project has measured.
+- `README.md` — hook install instructions with the exact `.claude/settings.json` block, the
+  kill switch, the threshold, and the fail-open contract.
+- `commands/code-map.md` — offers the hook when a user wants the saving to be automatic.
+- Versions to 0.8.0.
+
 ## [0.7.1] — 2026-08-09
 
 **The open question from v0.7.0 is answered: no.** One release ago this project shipped the

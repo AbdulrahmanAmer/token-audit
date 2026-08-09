@@ -16,6 +16,10 @@ scripts/code-index.mjs	IMPORTEDBY	scripts/test/code-index.test.mjs
 scripts/code-index.mjs	GUARD	scripts/test/code-index.test.mjs
 scripts/code-index.mjs	WHY	scripts/code-index.mjs:17 OR IT COSTS MORE THAN IT SAVES
 scripts/code-index.mjs	WHY	scripts/code-index.mjs:20 NO GENERATION DATE
+scripts/code-map-hook.mjs	IS	a PreToolUse hook on Read. This is the part that actually works.
+scripts/code-map-hook.mjs	USES	scripts/code-map.mjs
+scripts/code-map-hook.mjs	SPAWNEDBY	scripts/test/code-map.test.mjs
+scripts/code-map-hook.mjs	GUARD	scripts/test/code-map.test.mjs
 scripts/code-map-learn.mjs	IS	what does rediscovery actually cost, and what was actually looked for?
 scripts/code-map-learn.mjs	DEFINES	bashNeedle classifySearch encodeProject
 scripts/code-map-learn.mjs	IMPORTEDBY	scripts/test/code-map.test.mjs
@@ -24,7 +28,7 @@ scripts/code-map-learn.mjs	WHY	scripts/code-map-learn.mjs:17 A FEATURE THIS WAS 
 scripts/code-map-learn.mjs	WHY	scripts/code-map-learn.mjs:19 WHAT WAS SEARCHED FOR
 scripts/code-map.mjs	IS	where is it, and what is in it, without opening the file.
 scripts/code-map.mjs	DEFINES	LANGS
-scripts/code-map.mjs	IMPORTEDBY	scripts/test/code-map.test.mjs
+scripts/code-map.mjs	IMPORTEDBY	scripts/code-map-hook.mjs scripts/test/code-map.test.mjs
 scripts/code-map.mjs	GUARD	scripts/test/code-map.test.mjs
 scripts/code-map.mjs	WHY	scripts/code-map.mjs:33 THE INDEX IS A CACHE
 scripts/code-map.mjs	WHY	scripts/code-map.mjs:466 STATED SO IT CAN BE DISAGREED WITH

@@ -19,6 +19,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, unlinkSync
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let ok = 0, fail = 0;
@@ -353,6 +354,97 @@ await itAsync('a file read in a LATER session counts as cross-session rediscover
     { path: s1, project: 'p', size: 1 }, { path: s2, project: 'OTHER', size: 1 },
   ]);
   assert(t2.crossReadBytes === 0, 'cross-session re-reads leaked across project boundaries');
+});
+
+// ── THE HOOK: deny only the one case it exists for, allow everything else ─────────────
+//
+// code-map-hook.mjs sits in front of Read — the most load-bearing tool there is. The tests
+// below pin BOTH halves of its contract. The deny half: a whole-file Read of a large,
+// symbol-rich file comes back as an outline. The allow half — which is the safety-critical
+// one — is pinned path by path, because a hook that blocks a read it did not understand
+// breaks the agent to save tokens. Each allow test is the tombstone of a specific way this
+// could regress; the mutation run confirms every one of them is alive.
+
+const HOOK = join(HERE, '..', 'code-map-hook.mjs');
+const runHook = (event, env = {}) => JSON.parse(execFileSync(process.execPath, [HOOK], {
+  input: typeof event === 'string' ? event : JSON.stringify(event),
+  encoding: 'utf8',
+  env: { ...process.env, CODE_MAP_HOOK: '', ...env },
+}));
+const readEvent = (file_path, extra = {}) => ({
+  hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path, ...extra },
+});
+
+// A large file: 12 symbols spread over ~372 lines, comfortably over the 300-line default.
+const HOOK_DIR = join(SB, 'hook');
+mkdirSync(HOOK_DIR, { recursive: true });
+const bigFile = join(HOOK_DIR, 'big.mjs');
+writeFileSync(bigFile, Array.from({ length: 12 }, (_, i) =>
+  `export function hookSym${i}() {}\n${'// filler\n'.repeat(30)}`).join(''));
+// A small file WITH plenty of symbols, so the only reason to allow it is its size — this is
+// what makes the deny-small-files mutant detectable rather than masked by a symbol shortage.
+const smallFile = join(HOOK_DIR, 'small.mjs');
+writeFileSync(smallFile, Array.from({ length: 6 }, (_, i) => `export function smallSym${i}() {}\n`).join(''));
+// A large file with almost no symbols: prose in a .mjs jacket. The outline would be useless.
+const fewSymsFile = join(HOOK_DIR, 'prose.mjs');
+writeFileSync(fewSymsFile, `${'// just commentary\n'.repeat(398)}export function lonely() {}\n`);
+
+it('hook: denies a whole-file Read of a large file, and the reason IS the outline', () => {
+  const out = runHook(readEvent(bigFile));
+  const h = out.hookSpecificOutput;
+  assert(h && h.permissionDecision === 'deny', 'a 372-line, 12-symbol file should be denied');
+  assert(h.hookEventName === 'PreToolUse', 'the decision must name its event');
+  const reason = h.permissionDecisionReason || '';
+  assert(reason.includes('hookSym0') && reason.includes('hookSym11'),
+    'the reason should carry the outline, first symbol to last');
+  assert(/offset/.test(reason) && /limit/.test(reason),
+    'the reason must tell the model how to come back for a slice');
+  assert(/in full/.test(reason), 'the reason must include the full-file escape hatch');
+});
+
+it('hook: an explicit offset/limit slice is never interfered with', () => {
+  // The slice is the behaviour the hook exists to encourage. Denying it would loop the
+  // model: denied whole read -> asks for slice -> denied again -> no way to read at all.
+  const out = runHook(readEvent(bigFile, { offset: 100, limit: 60 }));
+  assert(!out.hookSpecificOutput, 'a sliced Read of the same large file must pass through');
+  const out2 = runHook(readEvent(bigFile, { limit: 60 }));
+  assert(!out2.hookSpecificOutput, 'limit alone is still an explicit slice');
+});
+
+it('hook: a small file is allowed — reading it is cheaper than the extra round trip', () => {
+  const out = runHook(readEvent(smallFile));
+  assert(!out.hookSpecificOutput, 'a 6-line file must be read directly, symbols or not');
+});
+
+it('hook: CODE_MAP_HOOK=off is a real kill switch', () => {
+  const out = runHook(readEvent(bigFile), { CODE_MAP_HOOK: 'off' });
+  assert(!out.hookSpecificOutput, 'the kill switch must allow even the file the hook exists for');
+});
+
+it('hook: malformed stdin allows — a hook that cannot parse must get out of the way', () => {
+  const out = runHook('this is not json {{{');
+  assert(!out.hookSpecificOutput, 'garbage stdin must produce an allow, not a deny or a crash');
+  const out2 = runHook('');
+  assert(!out2.hookSpecificOutput, 'empty stdin too');
+});
+
+it('hook: a large file with too few symbols is allowed — the outline would be useless', () => {
+  const out = runHook(readEvent(fewSymsFile));
+  assert(!out.hookSpecificOutput, 'prose in a .mjs jacket must be served whole, not outlined');
+});
+
+it('hook: any tool other than Read passes through untouched', () => {
+  const out = runHook({ hook_event_name: 'PreToolUse', tool_name: 'Grep', tool_input: { file_path: bigFile } });
+  assert(!out.hookSpecificOutput, 'the hook must not opine on tools it was not built for');
+  const out2 = runHook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: bigFile } });
+  assert(!out2.hookSpecificOutput, 'wrong event name must also pass through');
+});
+
+it('hook: a missing or relative path is allowed, never guessed at', () => {
+  assert(!runHook(readEvent(join(HOOK_DIR, 'does-not-exist.mjs'))).hookSpecificOutput,
+    'an unreadable file must be left for Read to error on honestly');
+  assert(!runHook(readEvent('relative/path.mjs')).hookSpecificOutput,
+    'a relative path cannot be resolved safely, so it must pass through');
 });
 
 rmSync(SB, { recursive: true, force: true });

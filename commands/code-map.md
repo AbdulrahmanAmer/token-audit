@@ -25,3 +25,7 @@ Set up and use the code map for this repository.
    enough to just read.
 7. Never paste `.claude/code-map/symbols.tsv` into context. Query it. Loading the whole index
    costs tokens and *reduces* recall.
+8. If the user wants this to happen **automatically** rather than per-invocation, offer the
+   `PreToolUse` hook (`scripts/code-map-hook.mjs`): it intercepts whole-file Reads of large
+   files and returns the outline instead, fails open on everything else, and is disabled with
+   `CODE_MAP_HOOK=off`. The exact settings block is in the README.

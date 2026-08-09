@@ -342,6 +342,59 @@ test, because Grep cannot serve it: `outline` on a large file, and `brief` for o
 an unfamiliar repo. Untested and plausible — the subject of any next trial, not claims
 validated by this one.
 
+### The fix that ships in v0.8.0: a hook, which does not need to be chosen
+
+A skill needs the model to *choose* it, and 30 runs say it never does. A **`PreToolUse`
+hook** fires on the call the model was already making. `scripts/code-map-hook.mjs` sits in
+front of `Read`: when the model asks for an entire large file (over 300 lines, no
+`offset`/`limit`), it denies that one call and returns the file's outline — every symbol with
+its line number — plus instructions to come back for a slice, or for the explicit full-file
+range if genuinely needed. Measured on one large-file task, same clone, same model —
+**n=1, one task; a six-task paired A/B is running and will be published when it exists**:
+
+| | hook off | hook on | |
+|---|---|---|---|
+| cost | $0.4082 | **$0.1855** | **−54.6%** |
+| cache write | 29,281 | 5,655 | **−80.7%** |
+| billed tokens | 190,061 | 190,759 | +0.4% |
+| turns | 5 | 5 | unchanged |
+
+**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
+cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
+$0.50/MTok — 12.5× cheaper. That asymmetry is why cost halves while billed tokens barely
+move, and why count-based measurements looked flat.
+
+Install — add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global),
+with the absolute path of your checkout or plugin install:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/absolute/path/to/token-audit/scripts/code-map-hook.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- **Kill switch:** set `CODE_MAP_HOOK=off` in the environment and every read passes through.
+- **Threshold:** `CODE_MAP_HOOK_MIN_LINES=500` raises the bar (default 300) — below it, the
+  extra round trip costs more than the file.
+- **It sits in front of `Read` and fails open by design.** Every path it does not positively
+  understand allows the read: explicit slices, small files, unsupported languages, unreadable
+  files, files with fewer than 3 symbols, malformed input, any thrown error. Each allow path
+  is pinned by a test, and three mutants (deny small files; deny slices; deny on parse
+  failure) each turn the suite red. It reads only the file the model asked for, writes
+  nothing, and has no network access.
+
 ```bash
 node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo
 node scripts/code-map.mjs find analyze   # scripts/audit.mjs:122  export  analyze
