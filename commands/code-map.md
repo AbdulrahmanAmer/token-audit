@@ -26,9 +26,12 @@ Set up and use the code map for this repository.
 7. Never paste `.claude/code-map/symbols.tsv` into context. Query it. Loading the whole index
    costs tokens and *reduces* recall.
 8. If the user wants this to happen **automatically** rather than per-invocation, offer the
-   hook — measured at −71.2% cost across six paired large-file tasks (n=6, one repo):
+   hook — a **context-window** tool, not a cost optimisation: it keeps ~94% of large-file
+   content out of the window (deterministic), and the measured cost effect is small (−2.4%
+   overall, counterbalanced, n=10, one repo, warm cache). Install:
    `node ${CLAUDE_PLUGIN_ROOT}/scripts/code-map.mjs hook install [--min-lines N]`. It
    intercepts whole-file Reads of large files and returns the outline instead, fails open on
    everything else, merges into `.claude/settings.json` without touching existing entries,
    and is removed with `hook uninstall` or paused with `CODE_MAP_HOOK=off`. It does not help
-   symbol lookup — do not pitch it as a Grep replacement.
+   symbol lookup — do not pitch it as a Grep replacement, and do not quote the retracted
+   −71.2% figure.

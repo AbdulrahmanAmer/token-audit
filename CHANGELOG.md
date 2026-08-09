@@ -2,7 +2,77 @@
 
 All notable changes to Token Audit. Versions follow [semver](https://semver.org/).
 
+## [0.9.1] — 2026-08-09
+
+**Retraction: the −71.2% hook figure shipped in v0.9.0 was an artifact of run order, not an
+effect.** This is the fourth correction this project has made to its own headline, and the
+pattern is the point — every one came from making the measurement stricter:
+
+| headline | shipped in | corrected in |
+|---|---|---|
+| −11% "total agent tokens" (byte-based) | v0.5.0 | v0.6.0 |
+| "the description is what fails" (hypothesis) | v0.7.0 | v0.7.1 |
+| "the skill never fires (0/30)" | v0.7.0/v0.7.1 | v0.9.0 |
+| **−71.2% cost from the hook** | v0.9.0 | **v0.9.1** |
+
+### What went wrong
+Every hook A/B ran `off` then `on` **back to back on the same task**, so the treatment arm
+always ran second — on a warm prompt cache. The null control (the same task twice with the
+hook **off both times**) measured **−79.7%** by itself ($0.2899 → $0.0589; cache writes
+24,551 → 390): the second run of *anything* is 70–80% cheaper, because the first pays the
+cache write and the second pays cache reads. The artifact was larger than the claimed
+effect, and it always landed on the treatment. The tell, ignored at the time: small files —
+which the hook passes through untouched — "improved" by 72%. A treatment cannot help cases
+it does not touch.
+
+### The corrected numbers — counterbalanced, half the tasks hook-on first
+**n=10, one repo, one model, warm cache:**
+
+| group | off | on | delta |
+|---|---|---|---|
+| big-file (n=6) | $1.4349 | $1.3697 | **−4.6%** |
+| symbol (n=2) | $0.1492 | $0.1504 | +0.8% |
+| small-file (n=2) | $0.1176 | $0.1412 | +20.1% (noise; absolutes are cents) |
+| **total (n=10)** | **$1.7017** | **$1.6612** | **−2.4%** |
+
+An independent first-runs-only comparison (unpaired, zero order effect) agrees: $0.1801 vs
+$0.1698 per task, −5.7%. Two methods agree; −2.4% is the number, it is small, and it is what
+was measured.
+
+### The claim that is solid — and it is about context, not money
+Deterministic — no agent, no cache, no ordering; the hook fed a real event per file and its
+output measured against what `Read` would have returned: **87,890 → 5,247 tokens (−94%)**
+across six large files, with the two small files passed through at exactly 0% change. The
+tokens kept out of the window would mostly have been billed as cache *reads* at $0.50/MTok —
+cheap — which is why 94% less context is only ~4% less money on a warm cache. **The hook is
+a context-window tool**: it preserves room and recall, and saves a few percent of cost as a
+side effect. It is not a cost optimisation, and the docs no longer present it as one.
+
+### Added: "How not to measure this" (README)
+The most reusable artefact of this release is the mistake, documented: back-to-back A/B runs
+measure prompt-cache warming, not the treatment; always run a null control and size the
+order effect before believing any smaller delta; always include cases the treatment cannot
+affect, and treat movement there as a failed experiment rather than noise.
+
+### Changed
+- `README.md` and `skills/code-map/SKILL.md` — every occurrence of −71.2% removed and
+  replaced with the two honest figures (−94% context, deterministic; −2.4% cost,
+  counterbalanced n=10), each labelled as what it is. The hook is reframed as a
+  context-window tool throughout, including the skill's `description:`.
+- `commands/code-map.md` — instructs against quoting the retracted figure.
+- The v0.9.0 adoption correction (unprompted invocation on large-file comprehension tasks)
+  is unaffected: it counts invocations, not dollars, and run order does not change who
+  invoked what.
+- Versions to 0.9.1. No script changes; 105 tests across 4 suites unchanged.
+
 ## [0.9.0] — 2026-08-09
+
+> **Retraction (v0.9.1):** the −71.2% figure below is an artifact of run order — every pair
+> ran `off` then `on` back to back, and the null control (hook off both times) measured
+> −79.7% on its own. Counterbalanced, the cost effect is **−2.4% overall, −4.6% on big-file
+> tasks** (n=10). The solid claim is **−94% context on large files**, which is about the
+> context window, not money — see [0.9.1]. The hook-management tooling, the fail-open fix,
+> and the adoption correction in this entry all stand.
 
 Two things, in order of importance: **a correction of v0.7.x's headline claim**, and the
 six-task measurement of the hook that replaces it.
@@ -76,6 +146,11 @@ existing file (3 red), uninstall that deletes all hooks (1 red).
 - Versions to 0.9.0.
 
 ## [0.8.0] — 2026-08-09
+
+> **Retraction (v0.9.1):** the −54.6% single-task figure below has the same run-order
+> artifact as v0.9.0's table — the hook-on run always came second, on a warm cache. See
+> [0.9.1] for the corrected numbers and the null control. The hook itself, its fail-open
+> contract, and its tests all stand.
 
 **The skill did not work. The hook does. And the reason is the price of tokens, not the
 count of them.** `code-map` as an auto-firing skill measured 0 invocations in 30 advertised

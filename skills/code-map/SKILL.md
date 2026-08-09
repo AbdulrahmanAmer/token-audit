@@ -1,17 +1,18 @@
 ---
 name: code-map
-description: Cuts the cost of large-file reads with a verified per-repo symbol map, delivered three ways in order of measured value — a PreToolUse hook that automatically intercepts whole-file Reads of large files and returns the outline (−71.2% cost across six paired tasks, n=6), the /code-map command, and find/outline/brief as manual tools. Use when asked to install, tune or disable the read hook, when a large file needs slicing or outlining, when orienting in an unfamiliar repository, or when asked where a symbol is defined. Not a Grep replacement — for symbol lookup agents correctly prefer Grep (0/30 measured) and the hook does not target that; it targets whole-file reads. Every answer re-verified against disk: a stale cache misses, never lies. Regex-based; fall back to Grep on a miss.
+description: Keeps large files out of the context window with a verified per-repo symbol map, delivered three ways — a PreToolUse hook that automatically intercepts whole-file Reads of large files and returns the outline (−94% context on large files, deterministic; cost effect −2.4% overall on a warm cache, counterbalanced n=10), the /code-map command, and find/outline/brief as manual tools. A context-window tool, not a cost optimisation. Use when asked to install, tune or disable the read hook, when a large file needs slicing or outlining, when orienting in an unfamiliar repository, or when asked where a symbol is defined. Not a Grep replacement — for symbol lookup agents correctly prefer Grep (0/30 measured) and the hook does not target that; it targets whole-file reads. Every answer re-verified against disk: a stale cache misses, never lies. Regex-based; fall back to Grep on a miss.
 license: MIT
 metadata:
-  version: "0.9.0"
+  version: "0.9.1"
   author: token-audit contributors
 ---
 
 # Code Map — three ways in, in order of measured value
 
-**1. The hook** — automatic, `PreToolUse` on `Read`. Measured across six paired large-file
-tasks: **−71.2% cost**. This is the delivery mechanism that works, because it fires on the
-call the model was already making.
+**1. The hook** — automatic, `PreToolUse` on `Read`. Keeps **94% of large-file content out
+of the context window** (deterministic measurement); the cost effect is small (**−2.4%
+overall, −4.6% on big-file tasks**, counterbalanced, n=10, one repo, warm cache). It is the
+delivery mechanism that works because it fires on the call the model was already making.
 **2. The `/code-map` command** — explicit setup and lookups; you invoke it.
 **3. `find` / `outline` / `brief`** — manual tools for one-off questions.
 
@@ -23,7 +24,7 @@ answers that better — and it **is** adopted unprompted for large-file comprehe
 the alternative is reading the whole file (5 invocations across the six-task set). The hook
 exists so the saving does not depend on that choice at all.
 
-## The hook — automatic, −71.2% measured
+## The hook — a context-window tool, not a cost optimisation
 
 When the model asks for a whole large file — over `CODE_MAP_HOOK_MIN_LINES` lines (default
 300), no `offset`/`limit` — the hook denies that one call and returns the file's outline:
@@ -44,28 +45,30 @@ settings file is refused rather than overwritten, and `uninstall` removes only i
 Per-session kill switch: `CODE_MAP_HOOK=off`. Per-session threshold override:
 `CODE_MAP_HOOK_MIN_LINES=500` (outranks the installed `--min-lines` flag).
 
-Six paired large-file tasks, same clone, same model, hook off vs on — **n=6, one repo**:
+**What it verifiably does** — deterministic, no agent, no cache, no ordering: fed a real
+event per file, it kept **87,890 → 5,247 tokens (−94%)** of whole-file content out of the
+context window across six large files, and passed the two small files through untouched at
+exactly 0% change. **That is a context-window claim, not a cost claim.** The tokens kept out
+would mostly have been cheap cache *reads* at $0.50/MTok, which is why 94% less context is
+only a few percent less money on a warm cache.
 
-| task | off | on | delta |
+Measured cost, counterbalanced (half the tasks ran hook-on first) — **n=10, one repo, one
+model, warm cache**:
+
+| group | off | on | delta |
 |---|---|---|---|
-| H1 | $0.7415 | $0.1366 | −81.6% |
-| H2 | $0.3500 | $0.1082 | −69.1% |
-| H3 | $0.5272 | $0.1770 | −66.4% |
-| H4 | $0.4982 | $0.1543 | −69.0% |
-| H5 | $0.5082 | $0.1103 | −78.3% |
-| H6 | $0.3626 | $0.1748 | −51.8% |
-| **total** | **$2.9877** | **$0.8612** | **−71.2%** |
+| big-file (n=6) | $1.4349 | $1.3697 | **−4.6%** |
+| symbol (n=2) | $0.1492 | $0.1504 | +0.8% |
+| small-file (n=2) | $0.1176 | $0.1412 | +20.1% (noise; absolutes are cents) |
+| **total (n=10)** | **$1.7017** | **$1.6612** | **−2.4%** |
 
-Every task negative; cache writes fell 10–20× on every one. *Caveat, stated rather than
-buried:* **H3 is contaminated** — one arm invoked the skill twice, the other zero. Excluding
-it: $2.4605 → $0.6842, **−72.2%**, so the headline does not depend on it.
-
-**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
-cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
-$0.50/MTok — 12.5× cheaper (published rates). Billed token counts stayed flat (+0.4% on the
-paired single-task run) while cost fell ~71%, which is why count-based measurement looked
-flat. **The hook does not help symbol lookup and must not be pitched as doing so** — it
-targets whole-file reads, nothing else.
+A first-runs-only comparison (unpaired, zero order effect) agrees: −5.7%. The saving is
+small, and that is what was measured. **v0.9.0's −71.2% is retracted**: every earlier A/B
+ran off-then-on back to back, so the treatment always ran second on a warm prompt cache —
+and the null control (same task twice, hook off both times) measured **−79.7%** by itself.
+Why install it, then: what it buys is **room and recall** — the window is not filled with
+whole files — with a small cost saving as a side effect. **The hook does not help symbol
+lookup and must not be pitched as doing so** — it targets whole-file reads, nothing else.
 
 **It fails open, always.** Every path the hook does not positively understand allows the
 read: explicit slice, small file, unsupported language, unreadable file, fewer than 3
@@ -101,8 +104,9 @@ location question:
 |---|---|---|---|
 | median tokens | 2,504–3,710 | 563–606 (**−76% to −85%**) | 135–182 (**−95%**) |
 
-These figures are arithmetic over files — the saving *available* per question. The hook's
-−71.2% (n=6 above) is the *realised* number. The map is **worse** for 5–26% of files — ones
+These figures are arithmetic over files — the saving *available* per question, in context
+terms. The hook's realised numbers are above: −94% context on large files, −2.4% cost
+overall. The map is **worse** for 5–26% of files — ones
 small enough that reading them costs less than slicing them. Below ~40 lines, just read the
 file.
 
@@ -151,8 +155,11 @@ not** — query it.
 - Skips files over 1 MB and minified/bundled files (long-line shape).
 - `find` matches names, not usages. "Who calls this" is `code-index`'s `IMPORTEDBY`, or Grep.
 - The cache lives in `.claude/code-map/` in the repo. Add it to `.gitignore`.
-- The hook figures are **n=6, one repo, and H3 is contaminated** (excluded total −72.2%). The
-  12.5× write/read price asymmetry is from the published rate card, not measured.
+- The hook's cost figures are **counterbalanced, n=10, one repo, one model, warm cache** —
+  and small. The −94% figure is deterministic and is about **context, not money**. The 12.5×
+  write/read price asymmetry is from the published rate card, not measured. An earlier
+  −71.2% claim was an artifact of running off-then-on back to back (null control: −79.7%)
+  and is retracted.
 - The adoption finding is one repo and 36 runs total across both trials. It licenses "Grep
   wins symbol lookup" and "large-file comprehension gets unprompted use", nothing broader.
 

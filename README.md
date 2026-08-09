@@ -47,7 +47,7 @@ Then ask *"where did this session's tokens go?"*, or run `/token-audit`.
 | `token-audit` | Reads the transcript Claude Code already writes and reports where a session's tokens went: re-read cost, repeated test output, shell output by kind, cost per commit. | `/token-audit` |
 | `quiet-tests` | Measures how much of a project's test output is per-test PASS announcements, then proposes a patch that withholds only those. Refuses when the projected saving is under 25%. | `/quiet-tests` |
 | `code-index` | Generates a deterministic, greppable fact table — one line per fact — for what you must know about a file without opening it. Config-driven, derived never authored, `--check` in CI. | `/code-index` |
-| `code-map` | Cuts large-file read cost — a fail-open `Read` hook serves outlines instead of whole files (−71.2% across six paired tasks, n=6), plus `find`/`outline`/`brief`. Every answer re-verified against disk, so a stale cache misses rather than lies. | `/code-map` |
+| `code-map` | Keeps large files out of the context window — a fail-open `Read` hook serves outlines instead of whole files (−94% context on large files, deterministic; cost effect −2.4%, counterbalanced n=10), plus `find`/`outline`/`brief`. Every answer re-verified against disk. | `/code-map` |
 
 `scripts/check-manifests.mjs` fails CI if a skill ships without a row here, or a row here
 names a skill that does not ship — both are silent failures for whoever installs this.
@@ -281,14 +281,13 @@ So this is not a search index and it does not replace grep — Anthropic
 search](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). It
 attacks the read side, by **replacing reading the wrong amount.**
 
-### The hook: −71.2% cost across six paired tasks
+### The hook: −94% context on large files. Not −71.2% cost — that figure is retracted.
 
-The delivery mechanism that works is the one that does not need to be chosen. `code-map`'s
-**`PreToolUse` hook** sits in front of `Read`: when the model asks for an entire large file
-(over 300 lines, no `offset`/`limit`), it denies that one call and returns the file's
-outline — every symbol with its line number — plus instructions to come back for a slice, or
-for the explicit full-file range if genuinely needed. Installing is one command, and so is
-leaving:
+The delivery mechanism that does not need to be chosen. `code-map`'s **`PreToolUse` hook**
+sits in front of `Read`: when the model asks for an entire large file (over 300 lines, no
+`offset`/`limit`), it denies that one call and returns the file's outline — every symbol
+with its line number — plus instructions to come back for a slice, or for the explicit
+full-file range if genuinely needed. Installing is one command, and so is leaving:
 
 ```bash
 node scripts/code-map.mjs hook install                   # merges into .claude/settings.json
@@ -301,27 +300,63 @@ The merge is non-destructive and idempotent — existing hooks and settings surv
 twice does not duplicate, and an unparseable `settings.json` is refused, never overwritten.
 Per-session kill switch: `CODE_MAP_HOOK=off`.
 
-Six paired large-file tasks, same clone, same model, hook off vs on — **n=6, one repo**:
+**What it verifiably does — deterministic, no agent, no cache, no ordering.** The hook was
+fed a real event per file and its output measured against what `Read` would have returned:
 
-| task | off | on | delta |
+| file | whole (tok) | served (tok) | |
 |---|---|---|---|
-| H1 | $0.7415 | $0.1366 | −81.6% |
-| H2 | $0.3500 | $0.1082 | −69.1% |
-| H3 | $0.5272 | $0.1770 | −66.4% |
-| H4 | $0.4982 | $0.1543 | −69.0% |
-| H5 | $0.5082 | $0.1103 | −78.3% |
-| H6 | $0.3626 | $0.1748 | −51.8% |
-| **total** | **$2.9877** | **$0.8612** | **−71.2%** |
+| settings.index.tsx | 19,580 | 1,153 | −94% |
+| tier-dashboards.tsx | 18,326 | 1,029 | −94% |
+| leads.workspace.tsx | 15,760 | 788 | −95% |
+| agent-dashboard.tsx | 14,453 | 886 | −94% |
+| CasesConductPanel.tsx | 9,866 | 428 | −96% |
+| leads-adapter.ts | 9,605 | 663 | −93% |
+| use-mobile.tsx | 160 | 160 | **0% — passed through** |
+| index.ts | 140 | 140 | **0% — passed through** |
+| **total** | **87,890** | **5,247** | **−94%** |
 
-Every task negative, and cache writes fell 10–20× on every one. *Caveat, stated rather than
-buried:* **H3 is contaminated** — one arm invoked the skill twice, the other zero. Excluding
-it the total is $2.4605 → $0.6842, **−72.2%**, so the headline does not depend on it.
+**This is a context-window claim, not a cost claim, and the distinction matters.** The
+tokens kept out of the window would mostly have been billed as cache *reads* at $0.50/MTok —
+cheap. Keeping them out matters for recall (Anthropic's guidance: recall degrades as context
+grows) and for how much room is left, and it saves a few percent of cost as a side effect.
+What the hook is **not** is a cost optimisation. Measured cost, counterbalanced (half the
+tasks ran hook-on first) — **n=10, one repo, one model, warm cache**:
 
-**The mechanism is cheaper tokens, not fewer tokens.** A large file entering context is a
-cache *write* at $6.25/MTok; the conversation re-sent on the extra turn is a cache *read* at
-$0.50/MTok — 12.5× cheaper. Billed token counts stayed flat (+0.4% on the paired single-task
-run) while cost fell ~71%, which is why count-based measurement looked flat. The hook does
-**not** help symbol lookup — Grep wins that, correctly; it targets whole-file reads only.
+| group | off | on | delta |
+|---|---|---|---|
+| big-file (n=6) | $1.4349 | $1.3697 | **−4.6%** |
+| symbol (n=2) | $0.1492 | $0.1504 | +0.8% |
+| small-file (n=2) | $0.1176 | $0.1412 | +20.1% (noise; absolutes are cents) |
+| **total (n=10)** | **$1.7017** | **$1.6612** | **−2.4%** |
+
+An independent check using first-runs only (unpaired, zero order effect) agrees: $0.1801 vs
+$0.1698 per task, −5.7%. −2.4% is small, and it is what was measured.
+
+**v0.9.0's −71.2% is retracted — it was an artifact of run order, not an effect.** Every
+earlier hook A/B ran `off` then `on` back to back on the same task, so the treatment arm
+always ran second, on a warm prompt cache. The null control — the same task twice with the
+hook **off both times** — measured **−79.7%** ($0.2899 → $0.0589; cache writes 24,551 → 390):
+the artifact was larger than the claimed effect. The tell, ignored at the time: small files,
+which the hook passes through untouched, "improved" 72%. A treatment cannot help cases it
+does not touch. The hook does **not** help symbol lookup — Grep wins that, correctly; it
+targets whole-file reads only.
+
+### How not to measure this
+
+The most reusable thing in this release is the mistake:
+
+- **Back-to-back A/B runs measure prompt-cache warming, not your treatment.** The second run
+  of *anything* is 70–80% cheaper here, because the first pays the cache write ($6.25/MTok)
+  and the second pays cache reads ($0.50/MTok). If the treatment arm always runs second, the
+  order effect lands entirely on it and reads as a win.
+- **Always run a null control** — the same task twice with the treatment off — and size the
+  order effect before believing any delta smaller than it. Here the null control was −79.7%.
+- **Always include cases the treatment cannot affect**, and treat movement there as a failed
+  experiment, not noise to wave away. Small files "improving" 72% was the alarm, and it was
+  ignored once.
+- Counterbalance (half the pairs treatment-first), or compare first-runs only across arms.
+  The two methods agreed here (−2.4% and −5.7%), which is what earned the number a place in
+  this README.
 
 **It sits in front of `Read` and fails open by design.** Every path it does not positively
 understand allows the read: explicit slices, small files, unsupported languages, unreadable
@@ -336,7 +371,7 @@ Those releases reported the trial below as **"the skill never fires."** That con
 too broad, and this section corrects it: all 30 of those runs asked *"where is symbol X"* or
 *"enumerate every Y"* — tasks Grep answers correctly, in one call, with no setup. Adoption
 was tested on the one task type the tool is not for. On **large-file comprehension** tasks —
-the six-task set above — the agent invokes the skill unprompted, via
+the six big-file tasks in the cost table above — the agent invokes the skill unprompted, via
 `Skill {"skill":"code-map"}`: **5 invocations across the set.** The honest statement:
 
 > `code-map` is not adopted for symbol lookup, correctly, because Grep answers that better.
@@ -393,12 +428,9 @@ outright — *"Run this BEFORE reaching for Grep … Prefer it over Grep for loc
 
 n=6 for v2, one description variant, one repo. What v0.7.1 called "untested and plausible" —
 value on the tasks Grep cannot serve — has since been measured: outline-shaped help on large
-files is exactly what the hook delivers (−71.2%, table above), and the six comprehension
-tasks drew 5 unprompted skill invocations. `brief` for orientation remains unmeasured.
-
-(The first paired hook measurement, a single task, showed the same shape: cost −54.6%, cache
-write −80.7%, billed tokens +0.4%, turns unchanged. Superseded by the six-task table above;
-kept as the source of the +0.4% token-count figure.)
+files is what the hook delivers (−94% context, deterministic table above; −4.6% cost on
+big-file tasks), and the six comprehension tasks drew 5 unprompted skill invocations.
+`brief` for orientation remains unmeasured.
 
 ```bash
 node scripts/code-map.mjs build          # incremental; ~6s warm on a 16,000-file repo

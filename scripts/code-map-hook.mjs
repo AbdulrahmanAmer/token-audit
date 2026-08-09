@@ -3,13 +3,12 @@
 //
 // ── Why this exists, and why the skill did not ────────────────────────────────────────
 //
-// `code-map` shipped as a skill. Measured across 30 runs in which it was installed and
-// advertised in the model's own skills listing — under two different descriptions, one of
-// which said outright "run this BEFORE reaching for Grep" — it was invoked **zero times**.
-//
-// The reason is not the wording. A skill needs the model to CHOOSE it, and the model already
-// has a tool that answers the question correctly: it reads the file. A hook does not need to
-// be chosen. It fires on the call the model was already making.
+// `code-map` shipped as a skill. Measured across 30 symbol-lookup runs in which it was
+// installed and advertised in the model's own skills listing — under two different
+// descriptions, one of which said outright "run this BEFORE reaching for Grep" — it was
+// invoked **zero times**, correctly: Grep answers symbol lookup in one call. On large-file
+// comprehension tasks it IS invoked unprompted (5 times across six tasks), but a hook does
+// not depend on that choice at all. It fires on the call the model was already making.
 //
 //     34% of every token in a 589-session corpus was a whole-file read.
 //     The median whole-file read on a 99k-line repo: 2,794 tok.  Its outline: 190 tok.
@@ -17,18 +16,20 @@
 // So: when the model asks for an entire large source file, hand it the map instead and let it
 // come back for the 60 lines it actually wants.
 //
-// ── The economics, which are not obvious ──────────────────────────────────────────────
+// ── What this buys, measured honestly ─────────────────────────────────────────────────
 //
-// This trades one extra round trip for a much smaller read, and that is a good trade only
-// because of how the bill is shaped. Measured from real `usage` records:
+// This is a CONTEXT-WINDOW tool, not a cost optimisation. Deterministically measured, it
+// keeps ~94% of large-file content out of the window (87,890 -> 5,247 tokens across six
+// large files, small files passed through at exactly 0%). What that buys is room and
+// recall — the window is not filled with whole files.
 //
-//     cache WRITE  $6.25/MTok   ← what a big file costs when it enters context
-//     cache READ   $0.50/MTok   ← what re-sending the conversation costs on the extra turn
-//
-// A cache read is 12.5x cheaper than a cache write. Avoiding a 19,580-token file read avoids
-// an expensive write; the extra turn it costs is billed at the cheap rate. That asymmetry is
-// the whole reason this is worth doing, and it is why the threshold below is expressed in
-// lines rather than being always-on: below it, the extra turn costs more than the file did.
+// The COST effect is small: −2.4% overall, −4.6% on big-file tasks (counterbalanced, n=10,
+// one repo, warm cache). The reason it is small is the price card: the tokens kept out
+// would mostly have been cheap cache READS ($0.50/MTok), not expensive WRITES ($6.25/MTok).
+// An earlier −71.2% claim was an artifact of running off-then-on back to back — the null
+// control (hook off both times) measured −79.7% on its own. Do not resurrect that number.
+// The threshold below exists because for small files even the small trade goes negative:
+// the extra round trip costs more than the file did.
 //
 // ── FAIL OPEN, ALWAYS ─────────────────────────────────────────────────────────────────
 //
